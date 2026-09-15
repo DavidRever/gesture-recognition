@@ -2,34 +2,291 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <title>Reconocimiento de Gestos</title>
-  <!-- Cargamos las librerías de MediaPipe desde CDN -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Control por Gestos y Dibujo Canvas</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background-color: #0f172a;
+      color: #f8fafc;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    header {
+      position: absolute;
+      top: 15px;
+      text-align: center;
+      z-index: 10;
+      background: rgba(15, 23, 42, 0.75);
+      padding: 10px 20px;
+      border-radius: 12px;
+      backdrop-filter: blur(8px);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    h1 {
+      font-size: 1.2rem;
+      margin-bottom: 4px;
+      color: #38bdf8;
+    }
+    p {
+      font-size: 0.85rem;
+      color: #cbd5e1;
+    }
+    .container {
+      position: relative;
+      width: 640px;
+      height: 480px;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+      border: 2px solid #334155;
+    }
+    video {
+      display: none;
+    }
+    canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      transform: scaleX(-1); /* Efecto espejo */
+    }
+    #status {
+      position: absolute;
+      bottom: 15px;
+      z-index: 10;
+      background: rgba(15, 23, 42, 0.85);
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #a855f7;
+      border: 1px solid rgba(168, 85, 247, 0.3);
+    }
+  </style>
+
+  <!-- MediaPipe dependencies -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
 <body>
-  <h2>Reconocimiento de Manos en Tiempo Real</h2>
-  <video id="input_video" style="display:none;"></video>
-  <canvas id="output_canvas" width="640" height="480" style="border: 1px solid #ccc;"></canvas>
+
+  <header>
+    <h1>Control por Gestos en Canvas</h1>
+    <p>☝️ <b>Índice + Palma:</b> Dibujar | 🖐️🖐️ <b>Abrir/Cerrar 2 veces ambas manos:</b> Borrar todo</p>
+  </header>
+
+  <div class="container">
+    <video id="webcam" autoplay playsinline></video>
+    <!-- Canvas para el dibujo permanente -->
+    <canvas id="paint_canvas" width="640" height="480"></canvas>
+    <!-- Canvas superior para dibujar manos, cajas y feedback en vivo -->
+    <canvas id="output_canvas" width="640" height="480"></canvas>
+  </div>
+
+  <div id="status">Iniciando cámara y modelo de gestos...</div>
 
   <script>
-    const videoElement = document.getElementById('input_video');
-    const canvasElement = document.getElementById('output_canvas');
-    const canvasCtx = canvasElement.getContext('2d');
+    const videoElement = document.getElementById('webcam');
+    const outputCanvas = document.getElementById('output_canvas');
+    const paintCanvas = document.getElementById('paint_canvas');
+    const ctx = outputCanvas.getContext('2d');
+    const paintCtx = paintCanvas.getContext('2d');
+    const statusDiv = document.getElementById('status');
 
-    function onResults(results) {
-      canvasCtx.save();
-      canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-      canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+    // Configuración del trazado de dibujo
+    paintCtx.lineWidth = 5;
+    paintCtx.lineCap = 'round';
+    paintCtx.strokeStyle = '#00f0ff';
 
-      if (results.multiHandLandmarks) {
-        for (const landmarks of results.multiHandLandmarks) {
-          // Aquí tienes las coordenadas (x, y, z) de los 21 puntos de la mano
-          // Puedes evaluar condiciones (ej: si la punta del dedo índice está arriba del nudillo)
-          console.log("Puntos detectados:", landmarks);
+    // Estado del trazado y gestos
+    let lastPoint = null;
+    let openClosedCount = 0;
+    let bothHandsState = 'UNKNOWN'; // 'BOTH_OPEN', 'BOTH_CLOSED', 'OTHER'
+    let lastStateChangeTime = 0;
+
+    // Métricas auxiliares para detección de gestos
+    function isHandOpen(landmarks) {
+      // Un dedo se considera extendido si la punta (tip) está más arriba (Y menor) que la articulación PIP/MCP
+      const tips = [8, 12, 16, 20];
+      const pips = [6, 10, 14, 18];
+      let extendedFingers = 0;
+
+      for (let i = 0; i < tips.length; i++) {
+        if (landmarks[tips[i]].y < landmarks[pips[i]].y) {
+          extendedFingers++;
         }
       }
-      canvasCtx.restore();
+      return extendedFingers >= 3;
+    }
+
+    function isIndexUpOnly(landmarks) {
+      const indexUp = landmarks[8].y < landmarks[6].y;
+      const middleDown = landmarks[12].y > landmarks[10].y;
+      const ringDown = landmarks[16].y > landmarks[14].y;
+      const pinkyDown = landmarks[20].y > landmarks[18].y;
+
+      return indexUp && middleDown && ringDown && pinkyDown;
+    }
+
+    function isHandClosed(landmarks) {
+      const tips = [8, 12, 16, 20];
+      const pips = [6, 10, 14, 18];
+      let closedFingers = 0;
+
+      for (let i = 0; i < tips.length; i++) {
+        if (landmarks[tips[i]].y > landmarks[pips[i]].y) {
+          closedFingers++;
+        }
+      }
+      return closedFingers >= 3;
+    }
+
+    function drawBoundingBox(landmarks, color, label) {
+      let minX = 1, minY = 1, maxX = 0, maxY = 0;
+
+      landmarks.forEach(pt => {
+        if (pt.x < minX) minX = pt.x;
+        if (pt.x > maxX) maxX = pt.x;
+        if (pt.y < minY) minY = pt.y;
+        if (pt.y > maxY) maxY = pt.y;
+      });
+
+      const x = minX * outputCanvas.width;
+      const y = minY * outputCanvas.height;
+      const w = (maxX - minX) * outputCanvas.width;
+      const h = (maxY - minY) * outputCanvas.height;
+
+      // Dibujar caja alrededor de la mano
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x, y, w, h);
+
+      // Etiqueta superior
+      if (label) {
+        ctx.fillStyle = color;
+        ctx.font = '12px sans-serif';
+        ctx.fillText(label, x, y - 6 > 10 ? y - 6 : y + 15);
+      }
+
+      // Dibujar caja pequeña alrededor de cada yema de los dedos
+      const fingerTips = [4, 8, 12, 16, 20];
+      fingerTips.forEach(tipIdx => {
+        const tipX = landmarks[tipIdx].x * outputCanvas.width;
+        const tipY = landmarks[tipIdx].y * outputCanvas.height;
+        const boxSize = 12;
+
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(tipX - boxSize/2, tipY - boxSize/2, boxSize, boxSize);
+      });
+    }
+
+    function onResults(results) {
+      // Limpiar el canvas de UI en cada frame
+      ctx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
+      ctx.drawImage(results.image, 0, 0, outputCanvas.width, outputCanvas.height);
+
+      const hands = results.multiHandLandmarks;
+
+      if (!hands || hands.length === 0) {
+        statusDiv.innerText = "Esperando manos en cámara...";
+        lastPoint = null;
+        return;
+      }
+
+      // Detectar lógica de borrar si hay 2 manos en pantalla
+      if (hands.length === 2) {
+        const hand1Open = isHandOpen(hands[0]);
+        const hand2Open = isHandOpen(hands[1]);
+        const hand1Closed = isHandClosed(hands[0]);
+        const hand2Closed = isHandClosed(hands[1]);
+
+        let currentFrameState = 'OTHER';
+        if (hand1Open && hand2Open) currentFrameState = 'BOTH_OPEN';
+        else if (hand1Closed && hand2Closed) currentFrameState = 'BOTH_CLOSED';
+
+        const now = Date.now();
+        if (currentFrameState !== bothHandsState && (now - lastStateChangeTime) > 200) {
+          if (bothHandsState === 'BOTH_OPEN' && currentFrameState === 'BOTH_CLOSED') {
+            openClosedCount += 0.5;
+          } else if (bothHandsState === 'BOTH_CLOSED' && currentFrameState === 'BOTH_OPEN') {
+            openClosedCount += 0.5;
+          }
+          bothHandsState = currentFrameState;
+          lastStateChangeTime = now;
+
+          if (openClosedCount >= 2) {
+            paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
+            statusDiv.innerText = "🧹 ¡Lienzo borrado!";
+            openClosedCount = 0;
+            setTimeout(() => { statusDiv.innerText = "Lienzo limpio. Listo para dibujar."; }, 1500);
+          }
+        }
+
+        drawBoundingBox(hands[0], '#e11d48', 'Mano 1');
+        drawBoundingBox(hands[1], '#e11d48', 'Mano 2');
+
+        if (openClosedCount > 0) {
+          statusDiv.innerText = `Gesto de borrado: ${Math.floor(openClosedCount)} / 2 ciclos`;
+        }
+        return;
+      }
+
+      // Lógica de dibujo (Mano 1: Palma Abierta, Mano 2: Índice levantado)
+      if (hands.length === 2) {
+        // Reiniciar contador de borrado si no aplica el condicional anterior
+        openClosedCount = 0;
+
+        let canvasHand = null;
+        let pointerHand = null;
+
+        if (isHandOpen(hands[0]) && isIndexUpOnly(hands[1])) {
+          canvasHand = hands[0];
+          pointerHand = hands[1];
+        } else if (isHandOpen(hands[1]) && isIndexUpOnly(hands[0])) {
+          canvasHand = hands[1];
+          pointerHand = hands[0];
+        }
+
+        drawBoundingBox(hands[0], '#38bdf8', 'Mano A');
+        drawBoundingBox(hands[1], '#38bdf8', 'Mano B');
+
+        if (canvasHand && pointerHand) {
+          statusDiv.innerText = "✍️ ¡Dibujando activo!";
+
+          // Coordenada del índice (Punto 8)
+          const indexTip = pointerHand[8];
+          const currX = indexTip.x * paintCanvas.width;
+          const currY = indexTip.y * paintCanvas.height;
+
+          if (lastPoint) {
+            paintCtx.beginPath();
+            paintCtx.moveTo(lastPoint.x, lastPoint.y);
+            paintCtx.lineTo(currX, currY);
+            paintCtx.stroke();
+          }
+          lastPoint = { x: currX, y: currY };
+        } else {
+          statusDiv.innerText = "Mostrando 2 manos. Levanta 1 índice + 1 palma para dibujar.";
+          lastPoint = null;
+        }
+      } else {
+        // Si solo hay 1 mano presente
+        drawBoundingBox(hands[0], '#22c55e', 'Mano detectada');
+        statusDiv.innerText = "Muestra ambas manos para interactuar (Dibujar o Borrar)";
+        lastPoint = null;
+      }
     }
 
     const hands = new Hands({
@@ -39,20 +296,23 @@
     hands.setOptions({
       maxNumHands: 2,
       modelComplexity: 1,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
+      minDetectionConfidence: 0.6,
+      minTrackingConfidence: 0.6
     });
 
     hands.onResults(onResults);
 
     const camera = new Camera(videoElement, {
       onFrame: async () => {
-        await hands.send({image: videoElement});
+        await hands.send({ image: videoElement });
       },
       width: 640,
       height: 480
     });
-    camera.start();
+
+    camera.start().then(() => {
+      statusDiv.innerText = "Cámara lista. Detectando manos...";
+    });
   </script>
 </body>
 </html>
