@@ -29,13 +29,14 @@
     video {
       display: none;
     }
+    /* El lienzo y el video se invierten horizontalmente para modo espejo */
     canvas {
       position: absolute;
       top: 0;
       left: 0;
       width: 100%;
       height: 100%;
-      transform: scaleX(-1); /* Efecto espejo */
+      transform: scaleX(-1);
     }
   </style>
 
@@ -47,9 +48,9 @@
 
   <div class="container">
     <video id="webcam" autoplay playsinline></video>
-    <!-- Canvas de dibujo permanente -->
+    <!-- Capa 1: Capa donde se guarda el dibujo del ratón/índice -->
     <canvas id="paint_canvas" width="1024" height="576"></canvas>
-    <!-- Canvas superior para trazado de manos y cajas -->
+    <!-- Capa 2: Capa superior para renderizar la cámara y las cajas de los dedos -->
     <canvas id="output_canvas" width="1024" height="576"></canvas>
   </div>
 
@@ -60,7 +61,7 @@
     const ctx = outputCanvas.getContext('2d');
     const paintCtx = paintCanvas.getContext('2d');
 
-    // Configuración del trazado de dibujo
+    // Estilo del pincel
     paintCtx.lineWidth = 6;
     paintCtx.lineCap = 'round';
     paintCtx.lineJoin = 'round';
@@ -71,62 +72,41 @@
     let bothHandsState = 'UNKNOWN';
     let lastStateChangeTime = 0;
 
-    // Distancia euclidiana básica 2D entre 2 puntos
-    function dist(p1, p2) {
-      return Math.hypot(p1.x - p2.x, p1.y - p2.y);
+    // Comprobar si un dedo individual está levantado (punta más arriba que la articulación)
+    function isFingerUp(landmarks, tipIdx, pipIdx) {
+      return landmarks[tipIdx].y < landmarks[pipIdx].y;
     }
 
-    // Comprobar si la mano es una palma abierta (dedos extendidos con respecto a la muñeca)
+    // Mano abierta: al menos 3 dedos extendidos
     function isOpenHand(landmarks) {
-      const wrist = landmarks[0];
-      const tips = [8, 12, 16, 20];
-      const mcps = [5, 9, 13, 17];
-      let extendedCount = 0;
-
-      for (let i = 0; i < tips.length; i++) {
-        if (dist(wrist, landmarks[tips[i]]) > dist(wrist, landmarks[mcps[i]])) {
-          extendedCount++;
-        }
-      }
-      return extendedCount >= 3;
+      const fingers = [
+        isFingerUp(landmarks, 8, 6),   // Índice
+        isFingerUp(landmarks, 12, 10), // Medio
+        isFingerUp(landmarks, 16, 14), // Anular
+        isFingerUp(landmarks, 20, 18)  // Meñique
+      ];
+      return fingers.filter(Boolean).length >= 3;
     }
 
-    // Comprobar si la mano tiene el índice levantado/señalando
+    // Dedo índice apuntando: Índice levantado y los demás dedos doblados
     function isIndexPointing(landmarks) {
-      const wrist = landmarks[0];
-      const indexTip = landmarks[8];
-      const indexMcp = landmarks[5];
+      const indexUp = isFingerUp(landmarks, 8, 6);
+      const middleUp = isFingerUp(landmarks, 12, 10);
+      const ringUp = isFingerUp(landmarks, 16, 14);
+      const pinkyUp = isFingerUp(landmarks, 20, 18);
 
-      // Índice debe estar extendido lejos de la muñeca
-      const indexExtended = dist(wrist, indexTip) > dist(wrist, indexMcp) * 1.2;
-
-      // Los otros 3 dedos (medio, anular, meñique) deben estar flexionados o replegados
-      const otherTips = [12, 16, 20];
-      const otherMcps = [9, 13, 17];
-      let otherFolded = 0;
-
-      for (let i = 0; i < otherTips.length; i++) {
-        if (dist(wrist, landmarks[otherTips[i]]) < dist(wrist, landmarks[otherMcps[i]]) * 1.15) {
-          otherFolded++;
-        }
-      }
-
-      return indexExtended && (otherFolded >= 2);
+      return indexUp && !middleUp && !ringUp && !pinkyUp;
     }
 
-    // Comprobar si la mano está cerrada (puño)
+    // Mano cerrada (puño)
     function isClosedHand(landmarks) {
-      const wrist = landmarks[0];
-      const tips = [8, 12, 16, 20];
-      const mcps = [5, 9, 13, 17];
-      let foldedCount = 0;
-
-      for (let i = 0; i < tips.length; i++) {
-        if (dist(wrist, landmarks[tips[i]]) < dist(wrist, landmarks[mcps[i]]) * 1.1) {
-          foldedCount++;
-        }
-      }
-      return foldedCount >= 3;
+      const fingers = [
+        isFingerUp(landmarks, 8, 6),
+        isFingerUp(landmarks, 12, 10),
+        isFingerUp(landmarks, 16, 14),
+        isFingerUp(landmarks, 20, 18)
+      ];
+      return fingers.filter(Boolean).length <= 1;
     }
 
     function drawBoundingBox(landmarks, color) {
@@ -144,7 +124,7 @@
       const w = (maxX - minX) * outputCanvas.width;
       const h = (maxY - minY) * outputCanvas.height;
 
-      // Caja principal alrededor de la mano
+      // Dibujar cuadro celeste/verde alrededor de la mano
       ctx.strokeStyle = color;
       ctx.lineWidth = 2;
       ctx.strokeRect(x, y, w, h);
@@ -173,7 +153,7 @@
         return;
       }
 
-      // 1. Detección del gesto de Borrado con 2 Manos
+      // 1. Borrar pantalla (abrir y cerrar ambas palmas 2 veces)
       if (hands.length === 2) {
         const h1Open = isOpenHand(hands[0]);
         const h2Open = isOpenHand(hands[1]);
@@ -200,7 +180,7 @@
         }
       }
 
-      // 2. Detección del gesto de Dibujo (1 Palma + 1 Índice)
+      // 2. Modo Dibujo (1 Palma Abierta + 1 Índice Levantado)
       if (hands.length === 2) {
         let pointerHand = null;
         let canvasHand = null;
@@ -216,17 +196,21 @@
         drawBoundingBox(hands[0], '#38bdf8');
         drawBoundingBox(hands[1], '#38bdf8');
 
+        // Si se detecta la combinación requerida
         if (pointerHand && canvasHand) {
           const indexTip = pointerHand[8];
+          
+          // Coordenada exacta en el canvas
           const currX = indexTip.x * paintCanvas.width;
           const currY = indexTip.y * paintCanvas.height;
 
-          // Dibujar punto/pincel guía sobre la punta del índice
+          // Dibujar punto visual en la punta del índice (Cursor de ratón)
           ctx.beginPath();
-          ctx.arc(currX, currY, 8, 0, 2 * Math.PI);
+          ctx.arc(currX, currY, 7, 0, 2 * Math.PI);
           ctx.fillStyle = '#00f0ff';
           ctx.fill();
 
+          // Dibujar sobre la capa permanente
           if (lastPoint) {
             paintCtx.beginPath();
             paintCtx.moveTo(lastPoint.x, lastPoint.y);
@@ -238,7 +222,6 @@
           lastPoint = null;
         }
       } else {
-        // Si solo hay 1 mano presente
         drawBoundingBox(hands[0], '#22c55e');
         lastPoint = null;
       }
