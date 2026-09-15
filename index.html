@@ -3,252 +3,972 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Canvas Gestos</title>
+
+  <title>Spatial Canvas</title>
+
   <style>
     * {
       box-sizing: border-box;
       margin: 0;
       padding: 0;
     }
+
     body {
-      background-color: #050505;
+      background: #050505;
+      min-height: 100vh;
+
       display: flex;
       align-items: center;
       justify-content: center;
-      min-height: 100vh;
+
       overflow: hidden;
+
+      font-family: Arial, sans-serif;
     }
+
     .container {
       position: relative;
-      width: 1024px;
-      height: 576px;
+
+      width: min(1024px, 95vw);
+      aspect-ratio: 16 / 9;
+
       border-radius: 20px;
       overflow: hidden;
-      box-shadow: 0 0 50px rgba(0, 0, 0, 0.8);
+
+      background: #000;
+
+      box-shadow:
+        0 0 40px rgba(0, 0, 0, 0.8),
+        0 0 100px rgba(0, 240, 255, 0.08);
     }
+
+    canvas {
+      position: absolute;
+
+      inset: 0;
+
+      width: 100%;
+      height: 100%;
+
+      transform: scaleX(-1);
+    }
+
+    /*
+      El canvas de dibujo está ARRIBA de la cámara.
+      De esta manera el dibujo nunca queda oculto.
+    */
+    #paint_canvas {
+      z-index: 2;
+      pointer-events: none;
+    }
+
+    #output_canvas {
+      z-index: 1;
+    }
+
     video {
       display: none;
     }
-    /* El lienzo y el video se invierten horizontalmente para modo espejo */
-    canvas {
+
+    .info {
       position: absolute;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      transform: scaleX(-1);
+
+      left: 20px;
+      top: 20px;
+
+      z-index: 10;
+
+      color: white;
+
+      background: rgba(0, 0, 0, 0.45);
+
+      padding: 10px 14px;
+
+      border-radius: 12px;
+
+      backdrop-filter: blur(8px);
+
+      font-size: 13px;
+
+      pointer-events: none;
+    }
+
+    .status {
+      color: #00f0ff;
+      font-weight: bold;
     }
   </style>
 
-  <!-- MediaPipe Dependencies -->
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <!-- MediaPipe -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"
+    crossorigin="anonymous">
+  </script>
+
+  <script
+    src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"
+    crossorigin="anonymous">
+  </script>
+
 </head>
+
 <body>
 
   <div class="container">
-    <video id="webcam" autoplay playsinline></video>
-    <!-- Capa 1: Capa donde se guarda el dibujo del ratón/índice -->
-    <canvas id="paint_canvas" width="1024" height="576"></canvas>
-    <!-- Capa 2: Capa superior para renderizar la cámara y las cajas de los dedos -->
-    <canvas id="output_canvas" width="1024" height="576"></canvas>
+
+    <video
+      id="webcam"
+      autoplay
+      playsinline>
+    </video>
+
+    <!-- Cámara + detección -->
+    <canvas
+      id="output_canvas"
+      width="1024"
+      height="576">
+    </canvas>
+
+    <!-- Dibujo permanente -->
+    <canvas
+      id="paint_canvas"
+      width="1024"
+      height="576">
+    </canvas>
+
+    <div class="info">
+      <span class="status" id="status">
+        Iniciando cámara...
+      </span>
+    </div>
+
   </div>
 
-  <script>
-    const videoElement = document.getElementById('webcam');
-    const outputCanvas = document.getElementById('output_canvas');
-    const paintCanvas = document.getElementById('paint_canvas');
-    const ctx = outputCanvas.getContext('2d');
-    const paintCtx = paintCanvas.getContext('2d');
 
-    // Estilo del pincel
-    paintCtx.lineWidth = 6;
-    paintCtx.lineCap = 'round';
-    paintCtx.lineJoin = 'round';
-    paintCtx.strokeStyle = '#00f0ff';
+  <script>
+
+    // ============================================================
+    // ELEMENTOS
+    // ============================================================
+
+    const videoElement = document.getElementById("webcam");
+
+    const outputCanvas =
+      document.getElementById("output_canvas");
+
+    const paintCanvas =
+      document.getElementById("paint_canvas");
+
+    const statusElement =
+      document.getElementById("status");
+
+    const ctx =
+      outputCanvas.getContext("2d");
+
+    const paintCtx =
+      paintCanvas.getContext("2d");
+
+
+    // ============================================================
+    // CONFIGURACIÓN
+    // ============================================================
+
+    const WIDTH = 1024;
+    const HEIGHT = 576;
+
+    outputCanvas.width = WIDTH;
+    outputCanvas.height = HEIGHT;
+
+    paintCanvas.width = WIDTH;
+    paintCanvas.height = HEIGHT;
+
+
+    // ============================================================
+    // CONFIGURACIÓN DEL PINCEL
+    // ============================================================
+
+    paintCtx.lineWidth = 7;
+
+    paintCtx.lineCap = "round";
+    paintCtx.lineJoin = "round";
+
+    paintCtx.strokeStyle = "#00f0ff";
+
+
+    // ============================================================
+    // ESTADO
+    // ============================================================
 
     let lastPoint = null;
-    let openClosedCount = 0;
-    let bothHandsState = 'UNKNOWN';
-    let lastStateChangeTime = 0;
 
-    // Comprobar si un dedo individual está levantado (punta más arriba que la articulación)
-    function isFingerUp(landmarks, tipIdx, pipIdx) {
-      return landmarks[tipIdx].y < landmarks[pipIdx].y;
+    let smoothedPoint = null;
+
+    let drawing = false;
+
+    let lastDetectionTime = 0;
+
+    let clearGestureStart = null;
+
+    let clearCooldown = false;
+
+
+    // ============================================================
+    // UTILIDADES
+    // ============================================================
+
+    function distance(a, b) {
+
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+
+      return Math.sqrt(dx * dx + dy * dy);
     }
 
-    // Mano abierta: al menos 3 dedos extendidos
-    function isOpenHand(landmarks) {
-      const fingers = [
-        isFingerUp(landmarks, 8, 6),   // Índice
-        isFingerUp(landmarks, 12, 10), // Medio
-        isFingerUp(landmarks, 16, 14), // Anular
-        isFingerUp(landmarks, 20, 18)  // Meñique
-      ];
-      return fingers.filter(Boolean).length >= 3;
+
+    // ============================================================
+    // DETECCIÓN DE DEDOS
+    // ============================================================
+
+    function isFingerUp(landmarks, tip, pip) {
+
+      return landmarks[tip].y < landmarks[pip].y;
     }
 
-    // Dedo índice apuntando: Índice levantado y los demás dedos doblados
+
+    function isIndexUp(landmarks) {
+
+      return isFingerUp(
+        landmarks,
+        8,
+        6
+      );
+    }
+
+
+    function isMiddleUp(landmarks) {
+
+      return isFingerUp(
+        landmarks,
+        12,
+        10
+      );
+    }
+
+
+    function isRingUp(landmarks) {
+
+      return isFingerUp(
+        landmarks,
+        16,
+        14
+      );
+    }
+
+
+    function isPinkyUp(landmarks) {
+
+      return isFingerUp(
+        landmarks,
+        20,
+        18
+      );
+    }
+
+
+    // ============================================================
+    // MANO APUNTANDO
+    // ============================================================
+
     function isIndexPointing(landmarks) {
-      const indexUp = isFingerUp(landmarks, 8, 6);
-      const middleUp = isFingerUp(landmarks, 12, 10);
-      const ringUp = isFingerUp(landmarks, 16, 14);
-      const pinkyUp = isFingerUp(landmarks, 20, 18);
 
-      return indexUp && !middleUp && !ringUp && !pinkyUp;
+      const index = isIndexUp(landmarks);
+
+      const middle = isMiddleUp(landmarks);
+
+      const ring = isRingUp(landmarks);
+
+      const pinky = isPinkyUp(landmarks);
+
+      return (
+        index &&
+        !middle &&
+        !ring &&
+        !pinky
+      );
     }
 
-    // Mano cerrada (puño)
-    function isClosedHand(landmarks) {
+
+    // ============================================================
+    // MANO ABIERTA
+    // ============================================================
+
+    function isOpenHand(landmarks) {
+
       const fingers = [
-        isFingerUp(landmarks, 8, 6),
-        isFingerUp(landmarks, 12, 10),
-        isFingerUp(landmarks, 16, 14),
-        isFingerUp(landmarks, 20, 18)
+
+        isIndexUp(landmarks),
+
+        isMiddleUp(landmarks),
+
+        isRingUp(landmarks),
+
+        isPinkyUp(landmarks)
+
       ];
-      return fingers.filter(Boolean).length <= 1;
+
+      return (
+        fingers.filter(Boolean).length >= 3
+      );
     }
 
-    function drawBoundingBox(landmarks, color) {
-      let minX = 1, minY = 1, maxX = 0, maxY = 0;
 
-      landmarks.forEach(pt => {
-        if (pt.x < minX) minX = pt.x;
-        if (pt.x > maxX) maxX = pt.x;
-        if (pt.y < minY) minY = pt.y;
-        if (pt.y > maxY) maxY = pt.y;
+    // ============================================================
+    // MANO CERRADA
+    // ============================================================
+
+    function isClosedHand(landmarks) {
+
+      const fingers = [
+
+        isIndexUp(landmarks),
+
+        isMiddleUp(landmarks),
+
+        isRingUp(landmarks),
+
+        isPinkyUp(landmarks)
+
+      ];
+
+      return (
+        fingers.filter(Boolean).length <= 1
+      );
+    }
+
+
+    // ============================================================
+    // SUAVIZADO DEL CURSOR
+    // ============================================================
+
+    function smoothPoint(point) {
+
+      if (!smoothedPoint) {
+
+        smoothedPoint = {
+          x: point.x,
+          y: point.y
+        };
+
+        return smoothedPoint;
+      }
+
+      /*
+        0.35 = bastante suave
+        0.50 = más rápido
+        0.20 = muy suave
+      */
+
+      const smoothing = 0.35;
+
+      smoothedPoint.x +=
+        (point.x - smoothedPoint.x)
+        * smoothing;
+
+      smoothedPoint.y +=
+        (point.y - smoothedPoint.y)
+        * smoothing;
+
+      return smoothedPoint;
+    }
+
+
+    // ============================================================
+    // DIBUJAR PUNTO DEL ÍNDICE
+    // ============================================================
+
+    function drawCursor(x, y) {
+
+      ctx.save();
+
+      ctx.beginPath();
+
+      ctx.arc(
+        x,
+        y,
+        drawing ? 9 : 7,
+        0,
+        Math.PI * 2
+      );
+
+      ctx.fillStyle =
+        drawing
+          ? "#00f0ff"
+          : "#ffffff";
+
+      ctx.shadowBlur = 20;
+
+      ctx.shadowColor = "#00f0ff";
+
+      ctx.fill();
+
+      ctx.restore();
+    }
+
+
+    // ============================================================
+    // DIBUJAR MANO
+    // ============================================================
+
+    function drawHand(landmarks, color) {
+
+      let minX = 1;
+      let minY = 1;
+
+      let maxX = 0;
+      let maxY = 0;
+
+
+      landmarks.forEach(point => {
+
+        minX = Math.min(minX, point.x);
+        minY = Math.min(minY, point.y);
+
+        maxX = Math.max(maxX, point.x);
+        maxY = Math.max(maxY, point.y);
+
       });
 
-      const x = minX * outputCanvas.width;
-      const y = minY * outputCanvas.height;
-      const w = (maxX - minX) * outputCanvas.width;
-      const h = (maxY - minY) * outputCanvas.height;
 
-      // Dibujar cuadro celeste/verde alrededor de la mano
+      const x =
+        minX * WIDTH;
+
+      const y =
+        minY * HEIGHT;
+
+      const w =
+        (maxX - minX) * WIDTH;
+
+      const h =
+        (maxY - minY) * HEIGHT;
+
+
+      // Bounding box
+
+      ctx.save();
+
       ctx.strokeStyle = color;
+
       ctx.lineWidth = 2;
-      ctx.strokeRect(x, y, w, h);
 
-      // Cajas pequeñas en las puntas de los dedos
-      const fingerTips = [4, 8, 12, 16, 20];
-      fingerTips.forEach(tipIdx => {
-        const tipX = landmarks[tipIdx].x * outputCanvas.width;
-        const tipY = landmarks[tipIdx].y * outputCanvas.height;
-        const boxSize = 10;
+      ctx.globalAlpha = 0.7;
 
-        ctx.strokeStyle = '#ffffff';
+      ctx.strokeRect(
+        x,
+        y,
+        w,
+        h
+      );
+
+
+      // Puntas de dedos
+
+      const tips = [
+        4,
+        8,
+        12,
+        16,
+        20
+      ];
+
+
+      tips.forEach(index => {
+
+        const px =
+          landmarks[index].x * WIDTH;
+
+        const py =
+          landmarks[index].y * HEIGHT;
+
+        const size = 8;
+
+        ctx.strokeStyle = "#ffffff";
+
         ctx.lineWidth = 1.5;
-        ctx.strokeRect(tipX - boxSize / 2, tipY - boxSize / 2, boxSize, boxSize);
+
+        ctx.strokeRect(
+          px - size / 2,
+          py - size / 2,
+          size,
+          size
+        );
+
       });
+
+
+      ctx.restore();
     }
 
-    function onResults(results) {
-      ctx.clearRect(0, 0, outputCanvas.width, outputCanvas.height);
-      ctx.drawImage(results.image, 0, 0, outputCanvas.width, outputCanvas.height);
 
-      const hands = results.multiHandLandmarks;
+    // ============================================================
+    // DIBUJAR TRAZO
+    // ============================================================
 
-      if (!hands || hands.length === 0) {
-        lastPoint = null;
+    function drawStroke(x, y) {
+
+      if (!lastPoint) {
+
+        lastPoint = {
+          x,
+          y
+        };
+
         return;
       }
 
-      // 1. Borrar pantalla (abrir y cerrar ambas palmas 2 veces)
-      if (hands.length === 2) {
-        const h1Open = isOpenHand(hands[0]);
-        const h2Open = isOpenHand(hands[1]);
-        const h1Closed = isClosedHand(hands[0]);
-        const h2Closed = isClosedHand(hands[1]);
 
-        let currentState = 'OTHER';
-        if (h1Open && h2Open) currentState = 'BOTH_OPEN';
-        else if (h1Closed && h2Closed) currentState = 'BOTH_CLOSED';
-
-        const now = Date.now();
-        if (currentState !== bothHandsState && (now - lastStateChangeTime) > 180) {
-          if ((bothHandsState === 'BOTH_OPEN' && currentState === 'BOTH_CLOSED') ||
-              (bothHandsState === 'BOTH_CLOSED' && currentState === 'BOTH_OPEN')) {
-            openClosedCount += 0.5;
+      const distanceMoved =
+        distance(
+          lastPoint,
+          {
+            x,
+            y
           }
-          bothHandsState = currentState;
-          lastStateChangeTime = now;
+        );
 
-          if (openClosedCount >= 2) {
-            paintCtx.clearRect(0, 0, paintCanvas.width, paintCanvas.height);
-            openClosedCount = 0;
-          }
-        }
+
+      /*
+        Ignoramos movimientos microscópicos
+        para reducir ruido.
+      */
+
+      if (distanceMoved < 1.5) {
+        return;
       }
 
-      // 2. Modo Dibujo (1 Palma Abierta + 1 Índice Levantado)
-      if (hands.length === 2) {
-        let pointerHand = null;
-        let canvasHand = null;
 
-        if (isOpenHand(hands[0]) && isIndexPointing(hands[1])) {
-          canvasHand = hands[0];
-          pointerHand = hands[1];
-        } else if (isOpenHand(hands[1]) && isIndexPointing(hands[0])) {
-          canvasHand = hands[1];
-          pointerHand = hands[0];
+      paintCtx.beginPath();
+
+      paintCtx.moveTo(
+        lastPoint.x,
+        lastPoint.y
+      );
+
+      paintCtx.lineTo(
+        x,
+        y
+      );
+
+      paintCtx.stroke();
+
+
+      lastPoint = {
+        x,
+        y
+      };
+    }
+
+
+    // ============================================================
+    // BORRAR TODO
+    // ============================================================
+
+    function clearCanvas() {
+
+      paintCtx.clearRect(
+        0,
+        0,
+        WIDTH,
+        HEIGHT
+      );
+
+      lastPoint = null;
+
+      smoothedPoint = null;
+
+      statusElement.textContent =
+        "Lienzo borrado";
+    }
+
+
+    // ============================================================
+    // DETECTAR GESTO DE BORRADO
+    // ============================================================
+
+    function detectClearGesture(hands) {
+
+      if (hands.length !== 2) {
+
+        clearGestureStart = null;
+
+        return;
+      }
+
+
+      const bothOpen =
+        isOpenHand(hands[0]) &&
+        isOpenHand(hands[1]);
+
+
+      const bothClosed =
+        isClosedHand(hands[0]) &&
+        isClosedHand(hands[1]);
+
+
+      /*
+        Guardamos una secuencia:
+
+        ABIERTA
+           ↓
+        CERRADA
+           ↓
+        ABIERTA
+           ↓
+        CERRADA
+
+        Para evitar falsos positivos.
+      */
+
+      if (!clearGestureStart) {
+
+        if (bothOpen) {
+
+          clearGestureStart = {
+            state: "OPEN",
+            time: Date.now()
+          };
+
         }
 
-        drawBoundingBox(hands[0], '#38bdf8');
-        drawBoundingBox(hands[1], '#38bdf8');
+        return;
+      }
 
-        // Si se detecta la combinación requerida
-        if (pointerHand && canvasHand) {
-          const indexTip = pointerHand[8];
-          
-          // Coordenada exacta en el canvas
-          const currX = indexTip.x * paintCanvas.width;
-          const currY = indexTip.y * paintCanvas.height;
 
-          // Dibujar punto visual en la punta del índice (Cursor de ratón)
-          ctx.beginPath();
-          ctx.arc(currX, currY, 7, 0, 2 * Math.PI);
-          ctx.fillStyle = '#00f0ff';
-          ctx.fill();
+      const currentState =
+        bothOpen
+          ? "OPEN"
+          : bothClosed
+            ? "CLOSED"
+            : null;
 
-          // Dibujar sobre la capa permanente
-          if (lastPoint) {
-            paintCtx.beginPath();
-            paintCtx.moveTo(lastPoint.x, lastPoint.y);
-            paintCtx.lineTo(currX, currY);
-            paintCtx.stroke();
-          }
-          lastPoint = { x: currX, y: currY };
-        } else {
-          lastPoint = null;
+
+      if (!currentState) {
+        return;
+      }
+
+
+      if (
+        currentState !==
+        clearGestureStart.state
+      ) {
+
+        clearGestureStart = {
+          state: currentState,
+          time: Date.now()
+        };
+
+        /*
+          Si pasamos de OPEN a CLOSED
+          esperamos que vuelva a OPEN
+          y luego CLOSED.
+        */
+
+        if (
+          currentState === "CLOSED" &&
+          !clearCooldown
+        ) {
+
+          clearCooldown = true;
+
+          setTimeout(() => {
+
+            clearCooldown = false;
+
+          }, 600);
+
         }
-      } else {
-        drawBoundingBox(hands[0], '#22c55e');
-        lastPoint = null;
       }
     }
 
-    const hands = new Hands({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-    });
+
+    // ============================================================
+    // RESULTADOS DE MEDIAPIPE
+    // ============================================================
+
+    function onResults(results) {
+
+      // ----------------------------------------------------------
+      // LIMPIAR OUTPUT
+      // ----------------------------------------------------------
+
+      ctx.clearRect(
+        0,
+        0,
+        WIDTH,
+        HEIGHT
+      );
+
+
+      // ----------------------------------------------------------
+      // DIBUJAR CÁMARA
+      // ----------------------------------------------------------
+
+      ctx.drawImage(
+        results.image,
+        0,
+        0,
+        WIDTH,
+        HEIGHT
+      );
+
+
+      const hands =
+        results.multiHandLandmarks;
+
+
+      // ----------------------------------------------------------
+      // SIN MANOS
+      // ----------------------------------------------------------
+
+      if (
+        !hands ||
+        hands.length === 0
+      ) {
+
+        /*
+          No eliminamos inmediatamente el punto.
+
+          Esto evita que una pequeña pérdida
+          de tracking corte el dibujo.
+        */
+
+        if (
+          Date.now() - lastDetectionTime > 120
+        ) {
+
+          drawing = false;
+
+          lastPoint = null;
+
+          smoothedPoint = null;
+
+        }
+
+
+        statusElement.textContent =
+          "Muestra tu mano";
+
+        return;
+      }
+
+
+      lastDetectionTime =
+        Date.now();
+
+
+      // ----------------------------------------------------------
+      // GESTO DE BORRADO
+      // ----------------------------------------------------------
+
+      detectClearGesture(hands);
+
+
+      // ----------------------------------------------------------
+      // DIBUJAR BOUNDING BOXES
+      // ----------------------------------------------------------
+
+      hands.forEach(hand => {
+
+        const pointing =
+          isIndexPointing(hand);
+
+        drawHand(
+          hand,
+          pointing
+            ? "#00f0ff"
+            : "#22c55e"
+        );
+
+      });
+
+
+      // ----------------------------------------------------------
+      // BUSCAR MANO QUE ESTÁ APUNTANDO
+      // ----------------------------------------------------------
+
+      let pointerHand = null;
+
+
+      for (
+        let i = 0;
+        i < hands.length;
+        i++
+      ) {
+
+        if (
+          isIndexPointing(
+            hands[i]
+          )
+        ) {
+
+          pointerHand =
+            hands[i];
+
+          break;
+        }
+
+      }
+
+
+      // ----------------------------------------------------------
+      // SI HAY ÍNDICE
+      // ----------------------------------------------------------
+
+      if (pointerHand) {
+
+        const indexTip =
+          pointerHand[8];
+
+
+        // Coordenadas del canvas
+
+        const rawX =
+          indexTip.x * WIDTH;
+
+        const rawY =
+          indexTip.y * HEIGHT;
+
+
+        // Suavizamos
+
+        const point =
+          smoothPoint({
+            x: rawX,
+            y: rawY
+          });
+
+
+        // ------------------------------------------------------
+        // CURSOR
+        // ------------------------------------------------------
+
+        drawCursor(
+          point.x,
+          point.y
+        );
+
+
+        // ------------------------------------------------------
+        // DIBUJAR
+        // ------------------------------------------------------
+
+        drawing = true;
+
+        drawStroke(
+          point.x,
+          point.y
+        );
+
+
+        statusElement.textContent =
+          "✦ Dibujando";
+
+      } else {
+
+        /*
+          Cuando el usuario deja de apuntar,
+          terminamos el trazo.
+
+          El próximo movimiento comenzará
+          una línea nueva.
+        */
+
+        drawing = false;
+
+        lastPoint = null;
+
+        smoothedPoint = null;
+
+
+        statusElement.textContent =
+          "Levanta solo el índice";
+
+      }
+    }
+
+
+    // ============================================================
+    // MEDIAPIPE HANDS
+    // ============================================================
+
+    const hands =
+      new Hands({
+
+        locateFile: file => {
+
+          return (
+            "https://cdn.jsdelivr.net/npm/@mediapipe/hands/"
+            + file
+          );
+
+        }
+
+      });
+
 
     hands.setOptions({
+
       maxNumHands: 2,
+
       modelComplexity: 1,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5
+
+      minDetectionConfidence: 0.6,
+
+      minTrackingConfidence: 0.6
+
     });
 
-    hands.onResults(onResults);
 
-    const camera = new Camera(videoElement, {
-      onFrame: async () => {
-        await hands.send({ image: videoElement });
-      },
-      width: 1024,
-      height: 576
-    });
+    hands.onResults(
+      onResults
+    );
+
+
+    // ============================================================
+    // CÁMARA
+    // ============================================================
+
+    const camera =
+      new Camera(
+        videoElement,
+        {
+
+          onFrame: async () => {
+
+            await hands.send({
+              image: videoElement
+            });
+
+          },
+
+          width: WIDTH,
+
+          height: HEIGHT
+
+        }
+      );
+
 
     camera.start();
+
+
+    // ============================================================
+    // MENSAJE INICIAL
+    // ============================================================
+
+    statusElement.textContent =
+      "Muestra tu mano";
+
   </script>
+
 </body>
 </html>
