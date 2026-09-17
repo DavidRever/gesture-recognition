@@ -1,1690 +1,590 @@
-```html
 <!DOCTYPE html>
 <html lang="es">
-
 <head>
-
-  <meta charset="UTF-8">
-
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0"
-  >
-
-  <title>Spatial Canvas</title>
-
-
-  <style>
-
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-    }
-
-
-    body {
-
-      background: #050505;
-
-      min-height: 100vh;
-
-      display: flex;
-      align-items: center;
-      justify-content: center;
-
-      overflow: hidden;
-
-      font-family: Arial, sans-serif;
-
-    }
-
-
-    .container {
-
-      position: relative;
-
-      width: min(1024px, 95vw);
-
-      aspect-ratio: 16 / 9;
-
-      border-radius: 20px;
-
-      overflow: hidden;
-
-      background: #000;
-
-      box-shadow:
-        0 0 40px rgba(0,0,0,0.8),
-        0 0 100px rgba(0,240,255,0.08);
-
-    }
-
-
-    canvas {
-
-      position: absolute;
-
-      inset: 0;
-
-      width: 100%;
-      height: 100%;
-
-      transform: scaleX(-1);
-
-    }
-
-
-    /*
-      El dibujo queda por encima
-      de la cámara.
-    */
-
-    #output_canvas {
-
-      z-index: 1;
-
-    }
-
-
-    #paint_canvas {
-
-      z-index: 2;
-
-      pointer-events: none;
-
-    }
-
-
-    video {
-
-      display: none;
-
-    }
-
-
-    /*
-      Indicador visual del color.
-      Solo aparece cuando cambia el color.
-    */
-
-    .color-indicator {
-
-      position: absolute;
-
-      top: 20px;
-      left: 50%;
-
-      transform:
-        translateX(-50%)
-        scale(0.8);
-
-      width: 42px;
-      height: 42px;
-
-      border-radius: 50%;
-
-      opacity: 0;
-
-      z-index: 20;
-
-      pointer-events: none;
-
-      box-shadow:
-        0 0 15px currentColor,
-        0 0 35px currentColor;
-
-      transition:
-        opacity 0.2s,
-        transform 0.25s;
-
-    }
-
-
-    .color-indicator.show {
-
-      opacity: 1;
-
-      transform:
-        translateX(-50%)
-        scale(1);
-
-    }
-
-  </style>
-
-
-  <!-- MediaPipe -->
-
-  <script
-    src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"
-    crossorigin="anonymous">
-  </script>
-
-  <script
-    src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"
-    crossorigin="anonymous">
-  </script>
-
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spatial Canvas</title>
+
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #050505;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    font-family: Arial, sans-serif;
+  }
+
+  .container {
+    position: relative;
+    width: min(1024px, 95vw);
+    aspect-ratio: 16 / 9;
+    border-radius: 20px;
+    overflow: hidden;
+    background: #000;
+    box-shadow:
+      0 0 40px rgba(0, 0, 0, 0.8),
+      0 0 100px rgba(0, 240, 255, 0.08);
+  }
+
+  .container:fullscreen {
+    width: 100vw;
+    height: 100vh;
+    border-radius: 0;
+  }
+
+  canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    transform: scaleX(-1);
+  }
+
+  /* El dibujo queda por encima de la cámara */
+  #output_canvas { z-index: 1; }
+  #paint_canvas { z-index: 2; pointer-events: none; }
+
+  video { display: none; }
+
+  /* Indicador visual del color activo */
+  .color-indicator {
+    position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%) scale(0.8);
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    opacity: 0;
+    z-index: 20;
+    pointer-events: none;
+    box-shadow: 0 0 15px currentColor, 0 0 35px currentColor;
+    transition: opacity 0.2s, transform 0.25s;
+  }
+
+  .color-indicator.show {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+
+  /* Botón de pantalla completa */
+  .fullscreen-btn {
+    position: absolute;
+    bottom: 18px;
+    right: 18px;
+    z-index: 30;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 240, 255, 0.4);
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(6px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: box-shadow 0.2s, border-color 0.2s, background 0.2s;
+  }
+
+  .fullscreen-btn:hover {
+    border-color: rgba(0, 240, 255, 0.9);
+    box-shadow: 0 0 16px rgba(0, 240, 255, 0.5);
+    background: rgba(0, 0, 0, 0.65);
+  }
+
+  .fullscreen-btn svg {
+    width: 18px;
+    height: 18px;
+    stroke: #e6feff;
+  }
+</style>
+
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
 </head>
-
 
 <body>
 
+  <div class="container" id="container">
 
-  <div class="container">
-
-
-    <video
-      id="webcam"
-      autoplay
-      playsinline>
-    </video>
-
+    <video id="webcam" autoplay playsinline></video>
 
     <!-- Cámara + detección -->
-
-    <canvas
-      id="output_canvas"
-      width="1024"
-      height="576">
-    </canvas>
-
+    <canvas id="output_canvas" width="1024" height="576"></canvas>
 
     <!-- Dibujo permanente -->
-
-    <canvas
-      id="paint_canvas"
-      width="1024"
-      height="576">
-    </canvas>
-
+    <canvas id="paint_canvas" width="1024" height="576"></canvas>
 
     <!-- Indicador de color -->
+    <div id="colorIndicator" class="color-indicator"></div>
 
-    <div
-      id="colorIndicator"
-      class="color-indicator">
-    </div>
-
+    <!-- Botón de pantalla completa -->
+    <button class="fullscreen-btn" id="fullscreenBtn" aria-label="Pantalla completa" title="Pantalla completa">
+      <svg id="fsIcon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 3H5a2 2 0 0 0-2 2v3"></path>
+        <path d="M16 3h3a2 2 0 0 1 2 2v3"></path>
+        <path d="M8 21H5a2 2 0 0 1-2-2v-3"></path>
+        <path d="M16 21h3a2 2 0 0 0 2-2v-3"></path>
+      </svg>
+    </button>
 
   </div>
 
-
-
   <script>
-
 
     // ============================================================
     // ELEMENTOS
     // ============================================================
-
-    const videoElement =
-      document.getElementById("webcam");
-
-    const outputCanvas =
-      document.getElementById("output_canvas");
-
-    const paintCanvas =
-      document.getElementById("paint_canvas");
-
-    const ctx =
-      outputCanvas.getContext("2d");
-
-    const paintCtx =
-      paintCanvas.getContext("2d");
-
-    const colorIndicator =
-      document.getElementById("colorIndicator");
-
-
-
-    // ============================================================
-    // DIMENSIONES
-    // ============================================================
+    const videoElement = document.getElementById("webcam");
+    const outputCanvas = document.getElementById("output_canvas");
+    const paintCanvas = document.getElementById("paint_canvas");
+    const ctx = outputCanvas.getContext("2d");
+    const paintCtx = paintCanvas.getContext("2d");
+    const colorIndicator = document.getElementById("colorIndicator");
+    const container = document.getElementById("container");
+    const fullscreenBtn = document.getElementById("fullscreenBtn");
+    const fsIcon = document.getElementById("fsIcon");
 
     const WIDTH = 1024;
-
     const HEIGHT = 576;
 
+    // ============================================================
+    // PANTALLA COMPLETA
+    // ============================================================
+    const EXPAND_PATH = `
+      <path d="M8 3H5a2 2 0 0 0-2 2v3"></path>
+      <path d="M16 3h3a2 2 0 0 1 2 2v3"></path>
+      <path d="M8 21H5a2 2 0 0 1-2-2v-3"></path>
+      <path d="M16 21h3a2 2 0 0 0 2-2v-3"></path>
+    `;
 
+    const COLLAPSE_PATH = `
+      <path d="M9 3v3a2 2 0 0 1-2 2H4"></path>
+      <path d="M15 3v3a2 2 0 0 0 2 2h3"></path>
+      <path d="M9 21v-3a2 2 0 0 0-2-2H4"></path>
+      <path d="M15 21v-3a2 2 0 0 1 2-2h3"></path>
+    `;
+
+    function isFullscreen() {
+      return !!(document.fullscreenElement || document.webkitFullscreenElement);
+    }
+
+    function updateFsIcon() {
+      fsIcon.innerHTML = isFullscreen() ? COLLAPSE_PATH : EXPAND_PATH;
+    }
+
+    fullscreenBtn.addEventListener("click", () => {
+      if (!isFullscreen()) {
+        (container.requestFullscreen || container.webkitRequestFullscreen)?.call(container);
+      } else {
+        (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+      }
+    });
+
+    document.addEventListener("fullscreenchange", updateFsIcon);
+    document.addEventListener("webkitfullscreenchange", updateFsIcon);
 
     // ============================================================
     // COLORES DEL PINCEL
     // ============================================================
-
     const colors = [
-
       "#FFD700", // Dorado
-
       "#008CFF", // Azul
-
       "#FF3030"  // Rojo
-
     ];
-
 
     let currentColorIndex = 0;
 
-
     function getCurrentColor() {
-
       return colors[currentColorIndex];
-
     }
 
-
-    function updateBrushColor() {
-
-      paintCtx.strokeStyle =
-        getCurrentColor();
-
+    function nextColor() {
+      currentColorIndex = (currentColorIndex + 1) % colors.length;
+      paintCtx.strokeStyle = getCurrentColor();
       showColorIndicator();
-
     }
-
-
-
-    // ============================================================
-    // INDICADOR DE COLOR
-    // ============================================================
 
     let indicatorTimeout;
 
-
     function showColorIndicator() {
-
-      const color =
-        getCurrentColor();
-
-      colorIndicator.style.background =
-        color;
-
-      colorIndicator.style.color =
-        color;
-
+      const color = getCurrentColor();
+      colorIndicator.style.background = color;
+      colorIndicator.style.color = color;
       colorIndicator.classList.add("show");
 
-
       clearTimeout(indicatorTimeout);
-
-
-      indicatorTimeout =
-        setTimeout(() => {
-
-          colorIndicator.classList.remove("show");
-
-        }, 700);
-
+      indicatorTimeout = setTimeout(() => {
+        colorIndicator.classList.remove("show");
+      }, 700);
     }
-
-
 
     // ============================================================
     // CONFIGURACIÓN DEL PINCEL
     // ============================================================
-
     paintCtx.lineWidth = 7;
-
     paintCtx.lineCap = "round";
-
     paintCtx.lineJoin = "round";
-
-    paintCtx.strokeStyle =
-      getCurrentColor();
-
-
+    paintCtx.strokeStyle = getCurrentColor();
 
     // ============================================================
     // ESTADO DEL DIBUJO
     // ============================================================
-
     let lastPoint = null;
-
     let smoothedPoint = null;
 
-    let drawing = false;
-
-
+    // ============================================================
+    // ESTADO DEL PELLIZCO (cambio de color)
+    // ============================================================
+    let pinchActive = false;
+    const PINCH_CLOSE_RATIO = 0.42; // umbral para considerar "pellizcado"
+    const PINCH_OPEN_RATIO = 0.65;  // umbral para considerar "soltado"
 
     // ============================================================
-    // ESTADO DEL SWIPE
+    // GOMA
     // ============================================================
-
-    let swipeStartX = null;
-
-    let swipeStartTime = null;
-
-    let swipeLocked = false;
-
-
-    /*
-      Distancia mínima para considerar
-      que realmente hiciste un swipe.
-    */
-
-    const SWIPE_DISTANCE = 120;
-
-
-    /*
-      Tiempo máximo del gesto.
-
-      Esto evita que mover lentamente
-      la mano cambie el color.
-    */
-
-    const SWIPE_MAX_TIME = 700;
-
-
-
-    // ============================================================
-    // ESTADO DEL BORRADO
-    // ============================================================
-
-    let erasing = false;
-
-
-    /*
-      Tamaño de la goma.
-    */
-
     const ERASER_RADIUS = 35;
 
-
-
     // ============================================================
-    // BORRADO DE TODO
+    // UTILIDADES GEOMÉTRICAS
     // ============================================================
-
-    let clearSequence = 0;
-
-    let lastClearTime = 0;
-
-
-
-    // ============================================================
-    // DETECCIÓN DE DEDOS
-    // ============================================================
-
-    function isFingerUp(
-      landmarks,
-      tip,
-      pip
-    ) {
-
-      return (
-        landmarks[tip].y <
-        landmarks[pip].y
-      );
-
-    }
-
-
-
-    function isIndexUp(landmarks) {
-
-      return isFingerUp(
-        landmarks,
-        8,
-        6
-      );
-
-    }
-
-
-    function isMiddleUp(landmarks) {
-
-      return isFingerUp(
-        landmarks,
-        12,
-        10
-      );
-
-    }
-
-
-    function isRingUp(landmarks) {
-
-      return isFingerUp(
-        landmarks,
-        16,
-        14
-      );
-
-    }
-
-
-    function isPinkyUp(landmarks) {
-
-      return isFingerUp(
-        landmarks,
-        20,
-        18
-      );
-
-    }
-
-
-
-    // ============================================================
-    // MANO APUNTANDO
-    // ============================================================
-
-    function isIndexPointing(
-      landmarks
-    ) {
-
-      return (
-
-        isIndexUp(landmarks) &&
-
-        !isMiddleUp(landmarks) &&
-
-        !isRingUp(landmarks) &&
-
-        !isPinkyUp(landmarks)
-
-      );
-
-    }
-
-
-
-    // ============================================================
-    // MANO ABIERTA
-    // ============================================================
-
-    function isOpenHand(
-      landmarks
-    ) {
-
-      const fingers = [
-
-        isIndexUp(landmarks),
-
-        isMiddleUp(landmarks),
-
-        isRingUp(landmarks),
-
-        isPinkyUp(landmarks)
-
-      ];
-
-
-      return (
-        fingers.filter(Boolean).length >= 3
-      );
-
-    }
-
-
-
-    // ============================================================
-    // PUÑO
-    // ============================================================
-
-    function isClosedHand(
-      landmarks
-    ) {
-
-      const fingers = [
-
-        isIndexUp(landmarks),
-
-        isMiddleUp(landmarks),
-
-        isRingUp(landmarks),
-
-        isPinkyUp(landmarks)
-
-      ];
-
-
-      return (
-        fingers.filter(Boolean).length <= 1
-      );
-
-    }
-
-
-
-    // ============================================================
-    // DISTANCIA ENTRE DOS PUNTOS
-    // ============================================================
-
     function distance(a, b) {
-
-      const dx =
-        a.x - b.x;
-
-      const dy =
-        a.y - b.y;
-
-
-      return Math.sqrt(
-        dx * dx +
-        dy * dy
-      );
-
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      return Math.sqrt(dx * dx + dy * dy);
     }
 
+    // Margen de histéresis para reducir el parpadeo en la detección
+    const FINGER_MARGIN = 0.02;
 
+    function isFingerUp(landmarks, tip, pip) {
+      return landmarks[tip].y < landmarks[pip].y - FINGER_MARGIN;
+    }
+
+    function isIndexUp(landmarks) { return isFingerUp(landmarks, 8, 6); }
+    function isMiddleUp(landmarks) { return isFingerUp(landmarks, 12, 10); }
+    function isRingUp(landmarks) { return isFingerUp(landmarks, 16, 14); }
+    function isPinkyUp(landmarks) { return isFingerUp(landmarks, 20, 18); }
+
+    function isIndexPointing(landmarks) {
+      return (
+        isIndexUp(landmarks) &&
+        !isMiddleUp(landmarks) &&
+        !isRingUp(landmarks) &&
+        !isPinkyUp(landmarks)
+      );
+    }
+
+    function isClosedHand(landmarks) {
+      const fingers = [
+        isIndexUp(landmarks),
+        isMiddleUp(landmarks),
+        isRingUp(landmarks),
+        isPinkyUp(landmarks)
+      ];
+      return fingers.filter(Boolean).length <= 1;
+    }
+
+    // Distancia pulgar-índice normalizada por el tamaño de la mano,
+    // para que funcione igual sin importar qué tan cerca esté la mano de la cámara.
+    function pinchRatio(landmarks) {
+      const handSize = distance(landmarks[0], landmarks[9]) || 1;
+      const pinchDist = distance(landmarks[4], landmarks[8]);
+      return pinchDist / handSize;
+    }
 
     // ============================================================
     // SUAVIZADO DEL ÍNDICE
     // ============================================================
-
-    function smoothPoint(
-      point
-    ) {
-
+    function smoothPoint(point) {
       if (!smoothedPoint) {
-
-        smoothedPoint = {
-
-          x: point.x,
-
-          y: point.y
-
-        };
-
-
+        smoothedPoint = { x: point.x, y: point.y };
         return smoothedPoint;
-
       }
-
-
       const smoothing = 0.35;
-
-
-      smoothedPoint.x +=
-        (
-          point.x -
-          smoothedPoint.x
-        ) * smoothing;
-
-
-      smoothedPoint.y +=
-        (
-          point.y -
-          smoothedPoint.y
-        ) * smoothing;
-
-
+      smoothedPoint.x += (point.x - smoothedPoint.x) * smoothing;
+      smoothedPoint.y += (point.y - smoothedPoint.y) * smoothing;
       return smoothedPoint;
-
     }
 
-
-
     // ============================================================
-    // DIBUJAR CURSOR
+    // DIBUJO DE OVERLAYS (estética "tecnológica")
     // ============================================================
-
-    function drawCursor(
-      x,
-      y,
-      color
-    ) {
-
+    function drawCursor(x, y, color) {
       ctx.save();
-
-
       ctx.beginPath();
-
-
-      ctx.arc(
-        x,
-        y,
-        8,
-        0,
-        Math.PI * 2
-      );
-
-
-      ctx.fillStyle =
-        color;
-
-
+      ctx.arc(x, y, 8, 0, Math.PI * 2);
+      ctx.fillStyle = color;
       ctx.shadowBlur = 20;
-
-      ctx.shadowColor =
-        color;
-
-
+      ctx.shadowColor = color;
       ctx.fill();
-
-
       ctx.restore();
-
     }
 
+    function drawEraserCursor(x, y) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(x, y, ERASER_RADIUS, 0, Math.PI * 2);
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.shadowBlur = 15;
+      ctx.shadowColor = "#ffffff";
+      ctx.stroke();
+      ctx.restore();
+    }
 
-
-    // ============================================================
-    // DIBUJAR INDICADOR DE GOMA
-    // ============================================================
-
-    function drawEraserCursor(
-      x,
-      y
-    ) {
+    // Línea que conecta pulgar e índice mientras se pellizca,
+    // como confirmación visual del cambio de color.
+    function drawPinchLink(landmarks, color) {
+      const thumb = landmarks[4];
+      const index = landmarks[8];
+      const x1 = thumb.x * WIDTH, y1 = thumb.y * HEIGHT;
+      const x2 = index.x * WIDTH, y2 = index.y * HEIGHT;
 
       ctx.save();
-
-
-      ctx.beginPath();
-
-
-      ctx.arc(
-        x,
-        y,
-        ERASER_RADIUS,
-        0,
-        Math.PI * 2
-      );
-
-
-      ctx.strokeStyle =
-        "#ffffff";
-
-
+      ctx.strokeStyle = color;
       ctx.lineWidth = 2;
-
-
-      ctx.shadowBlur = 15;
-
-      ctx.shadowColor =
-        "#ffffff";
-
-
+      ctx.shadowBlur = 12;
+      ctx.shadowColor = color;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
       ctx.stroke();
 
-
+      ctx.beginPath();
+      ctx.arc((x1 + x2) / 2, (y1 + y2) / 2, 6, 0, Math.PI * 2);
+      ctx.fillStyle = color;
+      ctx.fill();
       ctx.restore();
-
     }
 
-
-
-    // ============================================================
-    // DIBUJAR MANO
-    // ============================================================
-
-    function drawHand(
-      landmarks,
-      color
-    ) {
-
-      let minX = 1;
-
-      let minY = 1;
-
-      let maxX = 0;
-
-      let maxY = 0;
-
+    function drawHand(landmarks, color) {
+      let minX = 1, minY = 1, maxX = 0, maxY = 0;
 
       landmarks.forEach(point => {
-
-        minX =
-          Math.min(
-            minX,
-            point.x
-          );
-
-        minY =
-          Math.min(
-            minY,
-            point.y
-          );
-
-        maxX =
-          Math.max(
-            maxX,
-            point.x
-          );
-
-        maxY =
-          Math.max(
-            maxY,
-            point.y
-          );
-
+        minX = Math.min(minX, point.x);
+        minY = Math.min(minY, point.y);
+        maxX = Math.max(maxX, point.x);
+        maxY = Math.max(maxY, point.y);
       });
 
-
-      const x =
-        minX * WIDTH;
-
-      const y =
-        minY * HEIGHT;
-
-      const w =
-        (maxX - minX) * WIDTH;
-
-      const h =
-        (maxY - minY) * HEIGHT;
-
+      const x = minX * WIDTH;
+      const y = minY * HEIGHT;
+      const w = (maxX - minX) * WIDTH;
+      const h = (maxY - minY) * HEIGHT;
 
       ctx.save();
-
-
-      ctx.strokeStyle =
-        color;
-
+      ctx.strokeStyle = color;
       ctx.lineWidth = 2;
-
       ctx.globalAlpha = 0.55;
-
-
-      ctx.strokeRect(
-        x,
-        y,
-        w,
-        h
-      );
-
-
-      /*
-        Solo marcamos el índice.
-      */
-
-      const tip =
-        landmarks[8];
-
-
-      const tipX =
-        tip.x * WIDTH;
-
-      const tipY =
-        tip.y * HEIGHT;
-
-
-      ctx.strokeStyle =
-        "#ffffff";
-
-      ctx.lineWidth = 1.5;
-
-
-      ctx.strokeRect(
-        tipX - 5,
-        tipY - 5,
-        10,
-        10
-      );
-
-
+      ctx.strokeRect(x, y, w, h);
       ctx.restore();
 
+      // Marca en la punta del índice
+      const tip = landmarks[8];
+      const tipX = tip.x * WIDTH;
+      const tipY = tip.y * HEIGHT;
+
+      ctx.save();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(tipX - 5, tipY - 5, 10, 10);
+      ctx.restore();
+
+      // Marca en la punta del pulgar (útil para ver el pellizco)
+      const thumbTip = landmarks[4];
+      const thumbX = thumbTip.x * WIDTH;
+      const thumbY = thumbTip.y * HEIGHT;
+
+      ctx.save();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1.5;
+      ctx.globalAlpha = 0.8;
+      ctx.strokeRect(thumbX - 5, thumbY - 5, 10, 10);
+      ctx.restore();
     }
-
-
 
     // ============================================================
     // DIBUJAR TRAZO
     // ============================================================
-
-    function drawStroke(
-      x,
-      y
-    ) {
-
+    function drawStroke(x, y) {
       if (!lastPoint) {
-
-        lastPoint = {
-          x,
-          y
-        };
-
+        lastPoint = { x, y };
         return;
-
       }
 
+      const currentPoint = { x, y };
+      const movement = distance(lastPoint, currentPoint);
 
-      const currentPoint = {
-        x,
-        y
-      };
-
-
-      const movement =
-        distance(
-          lastPoint,
-          currentPoint
-        );
-
-
-      if (movement < 1.5) {
-
-        return;
-
-      }
-
+      if (movement < 1.5) return;
 
       paintCtx.beginPath();
-
-
-      paintCtx.moveTo(
-        lastPoint.x,
-        lastPoint.y
-      );
-
-
-      paintCtx.lineTo(
-        currentPoint.x,
-        currentPoint.y
-      );
-
-
+      paintCtx.moveTo(lastPoint.x, lastPoint.y);
+      paintCtx.lineTo(currentPoint.x, currentPoint.y);
       paintCtx.stroke();
 
-
-      lastPoint =
-        currentPoint;
-
+      lastPoint = currentPoint;
     }
-
-
 
     // ============================================================
     // BORRAR CON GOMA
     // ============================================================
-
-    function eraseAt(
-      x,
-      y
-    ) {
-
-      /*
-        Usamos destination-out para
-        hacer transparentes las partes
-        del dibujo que toca la goma.
-      */
-
+    function eraseAt(x, y) {
       paintCtx.save();
-
-
-      paintCtx.globalCompositeOperation =
-        "destination-out";
-
-
+      paintCtx.globalCompositeOperation = "destination-out";
       paintCtx.beginPath();
-
-
-      paintCtx.arc(
-        x,
-        y,
-        ERASER_RADIUS,
-        0,
-        Math.PI * 2
-      );
-
-
+      paintCtx.arc(x, y, ERASER_RADIUS, 0, Math.PI * 2);
       paintCtx.fill();
-
-
       paintCtx.restore();
-
-
-      /*
-        Volvemos al modo normal.
-      */
-
-      paintCtx.globalCompositeOperation =
-        "source-over";
-
+      paintCtx.globalCompositeOperation = "source-over";
     }
 
-
-
     // ============================================================
-    // BORRAR TODO
+    // PELLIZCO → CAMBIO DE COLOR
     // ============================================================
+    // Devuelve true si, este frame, alguna mano está en modo "pellizco"
+    // (y por lo tanto no debe dibujar ni borrar).
+    function updatePinchState(hands) {
+      let minRatio = Infinity;
 
-    function clearCanvas() {
+      hands.forEach(landmarks => {
+        minRatio = Math.min(minRatio, pinchRatio(landmarks));
+      });
 
-      paintCtx.clearRect(
-        0,
-        0,
-        WIDTH,
-        HEIGHT
-      );
+      if (minRatio < PINCH_CLOSE_RATIO && !pinchActive) {
+        pinchActive = true;
+        nextColor();
+      } else if (minRatio > PINCH_OPEN_RATIO && pinchActive) {
+        pinchActive = false;
+      }
 
-
-      lastPoint = null;
-
-      smoothedPoint = null;
-
+      return pinchActive;
     }
-
-
-
-    // ============================================================
-    // SWIPE DE COLOR
-    // ============================================================
-
-    function handleSwipe(
-      landmarks
-    ) {
-
-      /*
-        Para cambiar de color usamos
-        la posición de la muñeca.
-
-        Landmark 0 = muñeca.
-      */
-
-      const wrist =
-        landmarks[0];
-
-
-      const x =
-        wrist.x * WIDTH;
-
-
-      const now =
-        performance.now();
-
-
-      /*
-        Primer frame del gesto.
-      */
-
-      if (
-        swipeStartX === null
-      ) {
-
-        swipeStartX = x;
-
-        swipeStartTime = now;
-
-        return;
-
-      }
-
-
-      /*
-        Si ya hicimos un swipe,
-        esperamos a que la mano
-        vuelva a una posición estable.
-      */
-
-      if (swipeLocked) {
-
-        /*
-          Permitimos desbloquear cuando
-          la mano se haya alejado
-          razonablemente de la posición
-          anterior.
-        */
-
-        if (
-          Math.abs(
-            x - swipeStartX
-          ) < 40
-        ) {
-
-          swipeLocked = false;
-
-        }
-
-        return;
-
-      }
-
-
-      const deltaX =
-        x - swipeStartX;
-
-
-      const elapsed =
-        now - swipeStartTime;
-
-
-      /*
-        Si pasó demasiado tiempo,
-        reiniciamos el gesto.
-      */
-
-      if (
-        elapsed > SWIPE_MAX_TIME
-      ) {
-
-        swipeStartX = x;
-
-        swipeStartTime = now;
-
-        return;
-
-      }
-
-
-      /*
-        SWIPE HACIA LA DERECHA
-      */
-
-      if (
-        deltaX >
-        SWIPE_DISTANCE
-      ) {
-
-        currentColorIndex++;
-
-
-        if (
-          currentColorIndex >=
-          colors.length
-        ) {
-
-          currentColorIndex = 0;
-
-        }
-
-
-        updateBrushColor();
-
-
-        swipeLocked = true;
-
-
-        swipeStartX = x;
-
-        swipeStartTime = now;
-
-
-        return;
-
-      }
-
-
-      /*
-        SWIPE HACIA LA IZQUIERDA
-      */
-
-      if (
-        deltaX <
-        -SWIPE_DISTANCE
-      ) {
-
-        currentColorIndex--;
-
-
-        if (
-          currentColorIndex < 0
-        ) {
-
-          currentColorIndex =
-            colors.length - 1;
-
-        }
-
-
-        updateBrushColor();
-
-
-        swipeLocked = true;
-
-
-        swipeStartX = x;
-
-        swipeStartTime = now;
-
-      }
-
-    }
-
-
-
-    // ============================================================
-    // REINICIAR SWIPE
-    // ============================================================
-
-    function resetSwipe() {
-
-      swipeStartX = null;
-
-      swipeStartTime = null;
-
-    }
-
-
-
-    // ============================================================
-    // DETECTAR BORRADO CON DOS MANOS
-    // ============================================================
-
-    let clearState =
-      "NONE";
-
-
-    let clearTransitions = 0;
-
-
-    function detectClearGesture(
-      hands
-    ) {
-
-      if (
-        hands.length !== 2
-      ) {
-
-        clearState =
-          "NONE";
-
-        clearTransitions = 0;
-
-        return;
-
-      }
-
-
-      const bothOpen =
-        isOpenHand(hands[0]) &&
-        isOpenHand(hands[1]);
-
-
-      const bothClosed =
-        isClosedHand(hands[0]) &&
-        isClosedHand(hands[1]);
-
-
-      const now =
-        Date.now();
-
-
-      /*
-        OPEN → CLOSED → OPEN → CLOSED
-
-        = borrar todo
-      */
-
-
-      if (
-        bothOpen &&
-        clearState === "NONE"
-      ) {
-
-        clearState =
-          "OPEN";
-
-        clearTransitions = 0;
-
-        return;
-
-      }
-
-
-      if (
-        bothClosed &&
-        clearState === "OPEN"
-      ) {
-
-        clearState =
-          "CLOSED";
-
-        clearTransitions++;
-
-        return;
-
-      }
-
-
-      if (
-        bothOpen &&
-        clearState === "CLOSED"
-      ) {
-
-        clearState =
-          "OPEN";
-
-        clearTransitions++;
-
-        return;
-
-      }
-
-
-      if (
-        bothClosed &&
-        clearState === "OPEN" &&
-        clearTransitions >= 2 &&
-        !clearCooldownActive()
-      ) {
-
-        clearCanvas();
-
-        clearState =
-          "NONE";
-
-        clearTransitions = 0;
-
-        lastClearTime =
-          now;
-
-      }
-
-    }
-
-
-
-    function clearCooldownActive() {
-
-      return (
-        Date.now() -
-        lastClearTime <
-        1000
-      );
-
-    }
-
-
 
     // ============================================================
     // RESULTADOS DE MEDIAPIPE
     // ============================================================
+    function onResults(results) {
 
-    function onResults(
-      results
-    ) {
+      ctx.clearRect(0, 0, WIDTH, HEIGHT);
+      ctx.drawImage(results.image, 0, 0, WIDTH, HEIGHT);
 
+      const hands = results.multiHandLandmarks;
 
-      // ----------------------------------------------------------
-      // LIMPIAR CAPA DE CÁMARA
-      // ----------------------------------------------------------
-
-      ctx.clearRect(
-        0,
-        0,
-        WIDTH,
-        HEIGHT
-      );
-
-
-      // ----------------------------------------------------------
-      // DIBUJAR CÁMARA
-      // ----------------------------------------------------------
-
-      ctx.drawImage(
-        results.image,
-        0,
-        0,
-        WIDTH,
-        HEIGHT
-      );
-
-
-      const hands =
-        results.multiHandLandmarks;
-
-
-      // ----------------------------------------------------------
-      // SIN MANOS
-      // ----------------------------------------------------------
-
-      if (
-        !hands ||
-        hands.length === 0
-      ) {
-
-        drawing = false;
-
-        erasing = false;
-
+      if (!hands || hands.length === 0) {
         lastPoint = null;
-
         smoothedPoint = null;
-
-        resetSwipe();
-
+        pinchActive = false;
         return;
-
       }
 
+      const pinching = updatePinchState(hands);
 
+      // Dibujar overlays de detección para cada mano
+      hands.forEach(hand => {
+        let color = "#22c55e";
 
-      // ----------------------------------------------------------
-      // GESTO DE LIMPIAR TODO
-      // ----------------------------------------------------------
-
-      detectClearGesture(
-        hands
-      );
-
-
-
-      // ----------------------------------------------------------
-      // DIBUJAR DETECCIÓN
-      // ----------------------------------------------------------
-
-      hands.forEach(
-        hand => {
-
-          let color =
-            "#22c55e";
-
-
-          if (
-            isIndexPointing(hand)
-          ) {
-
-            color =
-              getCurrentColor();
-
-          }
-
-
-          if (
-            isClosedHand(hand)
-          ) {
-
-            color =
-              "#ffffff";
-
-          }
-
-
-          drawHand(
-            hand,
-            color
-          );
-
+        if (pinching) {
+          color = getCurrentColor();
+        } else if (isIndexPointing(hand)) {
+          color = getCurrentColor();
+        } else if (isClosedHand(hand)) {
+          color = "#ffffff";
         }
-      );
 
+        drawHand(hand, color);
+      });
 
+      // Mientras se pellizca, no se dibuja ni se borra
+      if (pinching) {
+        lastPoint = null;
+        smoothedPoint = null;
 
-      // ==========================================================
-      // BUSCAR MANO ACTIVA
-      // ==========================================================
+        hands.forEach(hand => {
+          if (pinchRatio(hand) < PINCH_OPEN_RATIO) {
+            drawPinchLink(hand, getCurrentColor());
+          }
+        });
 
+        return;
+      }
+
+      // Buscar mano activa
       let pointerHand = null;
-
       let closedHand = null;
 
-      let openHand = null;
-
-
-      for (
-        let i = 0;
-        i < hands.length;
-        i++
-      ) {
-
-        if (
-          isIndexPointing(
-            hands[i]
-          )
-        ) {
-
-          pointerHand =
-            hands[i];
-
-        }
-
-
-        if (
-          isClosedHand(
-            hands[i]
-          )
-        ) {
-
-          closedHand =
-            hands[i];
-
-        }
-
-
-        if (
-          isOpenHand(
-            hands[i]
-          )
-        ) {
-
-          openHand =
-            hands[i];
-
-        }
-
+      for (let i = 0; i < hands.length; i++) {
+        if (isIndexPointing(hands[i])) pointerHand = hands[i];
+        if (isClosedHand(hands[i])) closedHand = hands[i];
       }
 
-
-
-      // ==========================================================
       // BORRAR CON PUÑO
-      // ==========================================================
-
-      if (
-        closedHand &&
-        !pointerHand
-      ) {
-
-        erasing = true;
-
-        drawing = false;
-
+      if (closedHand && !pointerHand) {
         lastPoint = null;
-
         smoothedPoint = null;
 
+        const indexTip = closedHand[8];
+        const x = indexTip.x * WIDTH;
+        const y = indexTip.y * HEIGHT;
 
-        /*
-          Usamos el índice aunque esté
-          dentro del puño como posición
-          aproximada de la goma.
-        */
-
-        const indexTip =
-          closedHand[8];
-
-
-        const x =
-          indexTip.x * WIDTH;
-
-
-        const y =
-          indexTip.y * HEIGHT;
-
-
-        eraseAt(
-          x,
-          y
-        );
-
-
-        drawEraserCursor(
-          x,
-          y
-        );
-
-
-        resetSwipe();
-
-
+        eraseAt(x, y);
+        drawEraserCursor(x, y);
         return;
-
       }
 
-
-
-      // ==========================================================
       // DIBUJAR CON ÍNDICE
-      // ==========================================================
+      if (pointerHand) {
+        const indexTip = pointerHand[8];
+        const rawX = indexTip.x * WIDTH;
+        const rawY = indexTip.y * HEIGHT;
 
-      if (
-        pointerHand
-      ) {
+        const point = smoothPoint({ x: rawX, y: rawY });
 
-        /*
-          Si tenemos índice apuntando,
-          NO hacemos swipe.
-
-          Esto es importante porque evita
-          cambiar de color mientras dibujamos.
-        */
-
-        resetSwipe();
-
-
-        erasing = false;
-
-
-        const indexTip =
-          pointerHand[8];
-
-
-        const rawX =
-          indexTip.x * WIDTH;
-
-
-        const rawY =
-          indexTip.y * HEIGHT;
-
-
-        const point =
-          smoothPoint({
-            x: rawX,
-            y: rawY
-          });
-
-
-        drawCursor(
-          point.x,
-          point.y,
-          getCurrentColor()
-        );
-
-
-        drawing = true;
-
-
-        drawStroke(
-          point.x,
-          point.y
-        );
-
-
+        drawCursor(point.x, point.y, getCurrentColor());
+        drawStroke(point.x, point.y);
         return;
-
       }
 
-
-
-      // ==========================================================
-      // SWIPE CON MANO ABIERTA
-      // ==========================================================
-
-      if (
-        openHand
-      ) {
-
-        drawing = false;
-
-        erasing = false;
-
-        lastPoint = null;
-
-        smoothedPoint = null;
-
-
-        handleSwipe(
-          openHand
-        );
-
-
-        return;
-
-      }
-
-
-
-      // ==========================================================
-      // NINGÚN GESTO
-      // ==========================================================
-
-      drawing = false;
-
-      erasing = false;
-
+      // NINGÚN GESTO ACTIVO
       lastPoint = null;
-
       smoothedPoint = null;
-
-      resetSwipe();
-
     }
-
-
 
     // ============================================================
     // MEDIAPIPE
     // ============================================================
-
-    const hands =
-      new Hands({
-
-        locateFile: file => {
-
-          return (
-            "https://cdn.jsdelivr.net/npm/@mediapipe/hands/"
-            + file
-          );
-
-        }
-
-      });
-
-
-    hands.setOptions({
-
-      maxNumHands: 2,
-
-      modelComplexity: 1,
-
-      minDetectionConfidence: 0.6,
-
-      minTrackingConfidence: 0.6
-
+    const hands = new Hands({
+      locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
 
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.65,
+      minTrackingConfidence: 0.65
+    });
 
-    hands.onResults(
-      onResults
-    );
-
-
+    hands.onResults(onResults);
 
     // ============================================================
     // CÁMARA
     // ============================================================
-
-    const camera =
-      new Camera(
-        videoElement,
-        {
-
-          onFrame: async () => {
-
-            await hands.send({
-              image: videoElement
-            });
-
-          },
-
-          width: WIDTH,
-
-          height: HEIGHT
-
-        }
-      );
-
+    const camera = new Camera(videoElement, {
+      onFrame: async () => {
+        await hands.send({ image: videoElement });
+      },
+      width: WIDTH,
+      height: HEIGHT
+    });
 
     camera.start();
-
 
   </script>
 
 </body>
-
 </html>
-```
