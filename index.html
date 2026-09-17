@@ -340,31 +340,6 @@
       ctx.restore();
     }
 
-    // Línea que conecta pulgar y meñique mientras se pellizca,
-    // como confirmación visual del cambio de color.
-    function drawPinchLink(landmarks, color) {
-      const thumb = landmarks[4];
-      const pinky = landmarks[20];
-      const x1 = thumb.x * WIDTH, y1 = thumb.y * HEIGHT;
-      const x2 = pinky.x * WIDTH, y2 = pinky.y * HEIGHT;
-
-      ctx.save();
-      ctx.strokeStyle = color;
-      ctx.lineWidth = 2;
-      ctx.shadowBlur = 12;
-      ctx.shadowColor = color;
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.arc((x1 + x2) / 2, (y1 + y2) / 2, 6, 0, Math.PI * 2);
-      ctx.fillStyle = color;
-      ctx.fill();
-      ctx.restore();
-    }
-
     function drawHand(landmarks, color) {
       let minX = 1, minY = 1, maxX = 0, maxY = 0;
 
@@ -387,39 +362,27 @@
       ctx.strokeRect(x, y, w, h);
       ctx.restore();
 
-      // Marca en la punta del índice
-      const tip = landmarks[8];
-      const tipX = tip.x * WIDTH;
-      const tipY = tip.y * HEIGHT;
+      // Marca en la punta de cada dedo: pulgar, índice, medio, anular, meñique.
+      // El índice se resalta con el color actual de dibujo; el resto en blanco.
+      const fingertips = [4, 8, 12, 16, 20];
 
-      ctx.save();
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(tipX - 5, tipY - 5, 10, 10);
-      ctx.restore();
+      fingertips.forEach(id => {
+        const tip = landmarks[id];
+        const tipX = tip.x * WIDTH;
+        const tipY = tip.y * HEIGHT;
+        const isIndexTip = id === 8;
 
-      // Marca en la punta del pulgar y del meñique (útil para ver el pellizco)
-      const thumbTip = landmarks[4];
-      const thumbX = thumbTip.x * WIDTH;
-      const thumbY = thumbTip.y * HEIGHT;
-
-      ctx.save();
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 1.5;
-      ctx.globalAlpha = 0.8;
-      ctx.strokeRect(thumbX - 5, thumbY - 5, 10, 10);
-      ctx.restore();
-
-      const pinkyTip = landmarks[20];
-      const pinkyX = pinkyTip.x * WIDTH;
-      const pinkyY = pinkyTip.y * HEIGHT;
-
-      ctx.save();
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 1.5;
-      ctx.globalAlpha = 0.8;
-      ctx.strokeRect(pinkyX - 5, pinkyY - 5, 10, 10);
-      ctx.restore();
+        ctx.save();
+        ctx.strokeStyle = isIndexTip ? getCurrentColor() : "#ffffff";
+        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.85;
+        if (isIndexTip) {
+          ctx.shadowBlur = 10;
+          ctx.shadowColor = getCurrentColor();
+        }
+        ctx.strokeRect(tipX - 5, tipY - 5, 10, 10);
+        ctx.restore();
+      });
     }
 
     // ============================================================
@@ -514,16 +477,10 @@
       });
 
       // Mientras se pellizca, no se dibuja ni se borra
+      // (las cajitas de las puntas de los dedos ya dan la confirmación visual)
       if (pinching) {
         lastPoint = null;
         smoothedPoint = null;
-
-        hands.forEach(hand => {
-          if (pinchRatio(hand) < PINCH_OPEN_RATIO) {
-            drawPinchLink(hand, getCurrentColor());
-          }
-        });
-
         return;
       }
 
