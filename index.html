@@ -242,8 +242,8 @@
     // ESTADO DEL PELLIZCO (cambio de color)
     // ============================================================
     let pinchActive = false;
-    const PINCH_CLOSE_RATIO = 0.22; // umbral para considerar "pellizcado"
-    const PINCH_OPEN_RATIO = 0.60;  // umbral para considerar "soltado"
+    const PINCH_CLOSE_RATIO = 0.22;
+    const PINCH_OPEN_RATIO = 0.60;
 
     // ============================================================
     // GOMA
@@ -259,8 +259,9 @@
       return Math.sqrt(dx * dx + dy * dy);
     }
 
-    // Margen de histéresis para reducir el parpadeo en la detección
+    // Margen de histéresis en la detección de dedos
     const FINGER_MARGIN = 0.02;
+    const INDEX_DOWN_MARGIN = 0.06;
 
     function isFingerUp(landmarks, tip, pip) {
       return landmarks[tip].y < landmarks[pip].y - FINGER_MARGIN;
@@ -270,6 +271,10 @@
     function isMiddleUp(landmarks) { return isFingerUp(landmarks, 12, 10); }
     function isRingUp(landmarks) { return isFingerUp(landmarks, 16, 14); }
     function isPinkyUp(landmarks) { return isFingerUp(landmarks, 20, 18); }
+
+    function isIndexFullyDown(landmarks) {
+      return landmarks[8].y > landmarks[6].y + INDEX_DOWN_MARGIN;
+    }
 
     function isIndexPointing(landmarks) {
       return (
@@ -287,13 +292,10 @@
         isRingUp(landmarks),
         isPinkyUp(landmarks)
       ];
-      return fingers.filter(Boolean).length <= 1;
+      return fingers.filter(Boolean).length <= 1 && isIndexFullyDown(landmarks);
     }
 
-    // Distancia pulgar-meñique normalizada por el tamaño de la mano,
-    // para que funcione igual sin importar qué tan cerca esté la mano de la cámara.
-    // Se usa pulgar-meñique (en vez de pulgar-índice) para que no choque
-    // con el puño cerrado, donde el pulgar y el índice ya quedan juntos.
+    // Distancia pulgar-meñique normalizada por el tamaño de la mano
     function pinchRatio(landmarks) {
       const handSize = distance(landmarks[0], landmarks[9]) || 1;
       const pinchDist = distance(landmarks[4], landmarks[20]);
@@ -362,8 +364,7 @@
       ctx.strokeRect(x, y, w, h);
       ctx.restore();
 
-      // Marca en la punta de cada dedo: pulgar, índice, medio, anular, meñique.
-      // El índice se resalta con el color actual de dibujo; el resto en blanco.
+      // Marca en la punta de cada dedo; el índice usa el color actual
       const fingertips = [4, 8, 12, 16, 20];
 
       fingertips.forEach(id => {
@@ -423,15 +424,12 @@
     // ============================================================
     // PELLIZCO → CAMBIO DE COLOR
     // ============================================================
-    // El pellizco solo cuenta si índice, medio y anular están levantados.
-    // Así se evita el falso positivo al dibujar (índice arriba, el resto
-    // doblado hacia la palma, donde el meñique puede quedar cerca del pulgar).
+    // El pellizco solo cuenta con índice, medio y anular arriba
     function canPinch(landmarks) {
       return isIndexUp(landmarks) && isMiddleUp(landmarks) && isRingUp(landmarks);
     }
 
-    // Devuelve true si, este frame, alguna mano está en modo "pellizco"
-    // (y por lo tanto no debe dibujar ni borrar).
+    // true si el modo pellizco está activo este frame
     function updatePinchState(hands) {
       let minRatio = Infinity;
 
@@ -486,7 +484,6 @@
       });
 
       // Mientras se pellizca, no se dibuja ni se borra
-      // (las cajitas de las puntas de los dedos ya dan la confirmación visual)
       if (pinching) {
         lastPoint = null;
         smoothedPoint = null;
