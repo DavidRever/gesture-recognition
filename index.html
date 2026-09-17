@@ -233,10 +233,23 @@
     paintCtx.strokeStyle = getCurrentColor();
 
     // ============================================================
-    // ESTADO DEL DIBUJO
+    // ESTADO DEL DIBUJO (uno por mano, para dibujar con ambas a la vez)
     // ============================================================
-    let lastPoint = null;
-    let smoothedPoint = null;
+    const handStates = {};
+
+    function getHandState(key) {
+      if (!handStates[key]) {
+        handStates[key] = { lastPoint: null, smoothedPoint: null };
+      }
+      return handStates[key];
+    }
+
+    function resetHandState(key) {
+      if (handStates[key]) {
+        handStates[key].lastPoint = null;
+        handStates[key].smoothedPoint = null;
+      }
+    }
 
     // ============================================================
     // ESTADO DEL PELLIZCO (cambio de color)
@@ -259,37 +272,45 @@
       return Math.sqrt(dx * dx + dy * dy);
     }
 
-    function distance3D(a, b) {
-      const dx = a.x - b.x;
-      const dy = a.y - b.y;
-      const dz = (a.z || 0) - (b.z || 0);
-      return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    const EXTEND_ANGLE = 150; // grados; por encima = dedo extendido
+    const FOLD_ANGLE = 140;   // grados; por debajo = dedo doblado
+
+    // Ángulo en el nudillo medio (pip) entre el segmento hacia la base (mcp)
+    // y el segmento hacia la punta (tip). ~180° = dedo recto, valores bajos
+    // = dedo doblado. Al depender solo de los 3 puntos del propio dedo,
+    // funciona igual de frente, de lado o de espaldas a la cámara.
+    function fingerAngle(landmarks, mcp, pip, tip) {
+      const a = {
+        x: landmarks[mcp].x - landmarks[pip].x,
+        y: landmarks[mcp].y - landmarks[pip].y,
+        z: (landmarks[mcp].z || 0) - (landmarks[pip].z || 0)
+      };
+      const b = {
+        x: landmarks[tip].x - landmarks[pip].x,
+        y: landmarks[tip].y - landmarks[pip].y,
+        z: (landmarks[tip].z || 0) - (landmarks[pip].z || 0)
+      };
+
+      const dot = a.x * b.x + a.y * b.y + a.z * b.z;
+      const magA = Math.sqrt(a.x * a.x + a.y * a.y + a.z * a.z) || 1e-6;
+      const magB = Math.sqrt(b.x * b.x + b.y * b.y + b.z * b.z) || 1e-6;
+      const cos = Math.min(1, Math.max(-1, dot / (magA * magB)));
+
+      return (Math.acos(cos) * 180) / Math.PI;
     }
 
-    // Margen de histéresis en la detección de dedos
-    const FINGER_MARGIN = 0.02;
-    const INDEX_DOWN_MARGIN = 0.06;
-    const EXTEND_RATIO = 1.15;
-    const COMPACT_RATIO = 1.6;
-
-    // Dedo "arriba": test vertical o test 3D por distancia a la muñeca
-    function isFingerUp(landmarks, tip, pip, mcp) {
-      const verticalUp = landmarks[tip].y < landmarks[pip].y - FINGER_MARGIN;
-      const wrist = landmarks[0];
-      const extended =
-        distance3D(wrist, landmarks[tip]) >
-        distance3D(wrist, landmarks[mcp]) * EXTEND_RATIO;
-      return verticalUp || extended;
+    function isFingerUp(landmarks, mcp, pip, tip) {
+      return fingerAngle(landmarks, mcp, pip, tip) > EXTEND_ANGLE;
     }
 
-    function isIndexUp(landmarks) { return isFingerUp(landmarks, 8, 6, 5); }
-    function isMiddleUp(landmarks) { return isFingerUp(landmarks, 12, 10, 9); }
-    function isRingUp(landmarks) { return isFingerUp(landmarks, 16, 14, 13); }
-    function isPinkyUp(landmarks) { return isFingerUp(landmarks, 20, 18, 17); }
-
-    function isIndexFullyDown(landmarks) {
-      return landmarks[8].y > landmarks[6].y + INDEX_DOWN_MARGIN;
+    function isFingerFolded(landmarks, mcp, pip, tip) {
+      return fingerAngle(landmarks, mcp, pip, tip) < FOLD_ANGLE;
     }
+
+    function isIndexUp(landmarks) { return isFingerUp(landmarks, 5, 6, 8); }
+    function isMiddleUp(landmarks) { return isFingerUp(landmarks, 9, 10, 12); }
+    function isRingUp(landmarks) { return isFingerUp(landmarks, 13, 14, 16); }
+    function isPinkyUp(landmarks) { return isFingerUp(landmarks, 17, 18, 20); }
 
     function isIndexPointing(landmarks) {
       return (
@@ -300,25 +321,16 @@
       );
     }
 
+    // Puño: los 4 dedos doblados, sin importar la orientación de la mano
     function isClosedHand(landmarks) {
-      const fingers = [
-        isIndexUp(landmarks),
-        isMiddleUp(landmarks),
-        isRingUp(landmarks),
-        isPinkyUp(landmarks)
-      ];
-      const mostlyFolded = fingers.filter(Boolean).length <= 1;
-
-      // Puño: todas las puntas juntas y cerca de la muñeca
-      const handSize = distance(landmarks[0], landmarks[9]) || 1;
-      const tips = [8, 12, 16, 20];
-      const avgTipDist =
-        tips.reduce((sum, id) => sum + distance(landmarks[id], landmarks[0]), 0) /
-        tips.length;
-      const compact = avgTipDist < handSize * COMPACT_RATIO;
-
-      return mostlyFolded && compact && isIndexFullyDown(landmarks);
+      return (
+        isFingerFolded(landmarks, 5, 6, 8) &&
+        isFingerFolded(landmarks, 9, 10, 12) &&
+        isFingerFolded(landmarks, 13, 14, 16) &&
+        isFingerFolded(landmarks, 17, 18, 20)
+      );
     }
+
 
     // Distancia pulgar-meñique normalizada por el tamaño de la mano
     function pinchRatio(landmarks) {
@@ -330,15 +342,15 @@
     // ============================================================
     // SUAVIZADO DEL ÍNDICE
     // ============================================================
-    function smoothPoint(point) {
-      if (!smoothedPoint) {
-        smoothedPoint = { x: point.x, y: point.y };
-        return smoothedPoint;
+    function smoothPoint(state, point) {
+      if (!state.smoothedPoint) {
+        state.smoothedPoint = { x: point.x, y: point.y };
+        return state.smoothedPoint;
       }
       const smoothing = 0.35;
-      smoothedPoint.x += (point.x - smoothedPoint.x) * smoothing;
-      smoothedPoint.y += (point.y - smoothedPoint.y) * smoothing;
-      return smoothedPoint;
+      state.smoothedPoint.x += (point.x - state.smoothedPoint.x) * smoothing;
+      state.smoothedPoint.y += (point.y - state.smoothedPoint.y) * smoothing;
+      return state.smoothedPoint;
     }
 
     // ============================================================
@@ -414,23 +426,23 @@
     // ============================================================
     // DIBUJAR TRAZO
     // ============================================================
-    function drawStroke(x, y) {
-      if (!lastPoint) {
-        lastPoint = { x, y };
+    function drawStroke(state, x, y) {
+      if (!state.lastPoint) {
+        state.lastPoint = { x, y };
         return;
       }
 
       const currentPoint = { x, y };
-      const movement = distance(lastPoint, currentPoint);
+      const movement = distance(state.lastPoint, currentPoint);
 
       if (movement < 1.5) return;
 
       paintCtx.beginPath();
-      paintCtx.moveTo(lastPoint.x, lastPoint.y);
+      paintCtx.moveTo(state.lastPoint.x, state.lastPoint.y);
       paintCtx.lineTo(currentPoint.x, currentPoint.y);
       paintCtx.stroke();
 
-      lastPoint = currentPoint;
+      state.lastPoint = currentPoint;
     }
 
     // ============================================================
@@ -454,13 +466,31 @@
       return isIndexUp(landmarks) && isMiddleUp(landmarks) && isRingUp(landmarks);
     }
 
-    // true si el modo pellizco está activo este frame
-    function updatePinchState(hands) {
-      let minRatio = Infinity;
+    // ============================================================
+    // RESULTADOS DE MEDIAPIPE
+    // ============================================================
+    function onResults(results) {
 
-      hands.forEach(landmarks => {
-        if (canPinch(landmarks)) {
-          minRatio = Math.min(minRatio, pinchRatio(landmarks));
+      ctx.clearRect(0, 0, WIDTH, HEIGHT);
+      ctx.drawImage(results.image, 0, 0, WIDTH, HEIGHT);
+
+      const hands = results.multiHandLandmarks;
+      const handedness = results.multiHandedness || [];
+
+      if (!hands || hands.length === 0) {
+        Object.keys(handStates).forEach(resetHandState);
+        pinchActive = false;
+        return;
+      }
+
+      // Identidad estable de cada mano entre frames (para no mezclar trazos)
+      const presentKeys = new Set();
+
+      // Cambio de color: solo cuentan las manos con índice+medio+anular arriba
+      let minRatio = Infinity;
+      hands.forEach(hand => {
+        if (canPinch(hand)) {
+          minRatio = Math.min(minRatio, pinchRatio(hand));
         }
       });
 
@@ -471,89 +501,62 @@
         pinchActive = false;
       }
 
-      return pinchActive;
-    }
+      hands.forEach((hand, i) => {
+        const key = handedness[i]?.label || `hand_${i}`;
+        presentKeys.add(key);
 
-    // ============================================================
-    // RESULTADOS DE MEDIAPIPE
-    // ============================================================
-    function onResults(results) {
+        const colorGesture = canPinch(hand);
+        const pointing = isIndexPointing(hand);
+        const closed = isClosedHand(hand);
 
-      ctx.clearRect(0, 0, WIDTH, HEIGHT);
-      ctx.drawImage(results.image, 0, 0, WIDTH, HEIGHT);
+        // Overlay de detección
+        let overlayColor = "#22c55e";
+        if (colorGesture) overlayColor = getCurrentColor();
+        else if (pointing) overlayColor = getCurrentColor();
+        else if (closed) overlayColor = "#ffffff";
+        drawHand(hand, overlayColor);
 
-      const hands = results.multiHandLandmarks;
-
-      if (!hands || hands.length === 0) {
-        lastPoint = null;
-        smoothedPoint = null;
-        pinchActive = false;
-        return;
-      }
-
-      const pinching = updatePinchState(hands);
-
-      // Dibujar overlays de detección para cada mano
-      hands.forEach(hand => {
-        let color = "#22c55e";
-
-        if (pinching) {
-          color = getCurrentColor();
-        } else if (isIndexPointing(hand)) {
-          color = getCurrentColor();
-        } else if (isClosedHand(hand)) {
-          color = "#ffffff";
+        // El gesto de cambio de color no dibuja ni borra
+        if (colorGesture) {
+          resetHandState(key);
+          return;
         }
 
-        drawHand(hand, color);
+        // BORRAR CON PUÑO
+        if (closed) {
+          resetHandState(key);
+
+          const indexTip = hand[8];
+          const x = indexTip.x * WIDTH;
+          const y = indexTip.y * HEIGHT;
+
+          eraseAt(x, y);
+          drawEraserCursor(x, y);
+          return;
+        }
+
+        // DIBUJAR CON ÍNDICE
+        if (pointing) {
+          const state = getHandState(key);
+          const indexTip = hand[8];
+          const rawX = indexTip.x * WIDTH;
+          const rawY = indexTip.y * HEIGHT;
+
+          const point = smoothPoint(state, { x: rawX, y: rawY });
+
+          drawCursor(point.x, point.y, getCurrentColor());
+          drawStroke(state, point.x, point.y);
+          return;
+        }
+
+        // NINGÚN GESTO ACTIVO EN ESTA MANO
+        resetHandState(key);
       });
 
-      // Mientras se pellizca, no se dibuja ni se borra
-      if (pinching) {
-        lastPoint = null;
-        smoothedPoint = null;
-        return;
-      }
-
-      // Buscar mano activa
-      let pointerHand = null;
-      let closedHand = null;
-
-      for (let i = 0; i < hands.length; i++) {
-        if (isIndexPointing(hands[i])) pointerHand = hands[i];
-        if (isClosedHand(hands[i])) closedHand = hands[i];
-      }
-
-      // BORRAR CON PUÑO
-      if (closedHand && !pointerHand) {
-        lastPoint = null;
-        smoothedPoint = null;
-
-        const indexTip = closedHand[8];
-        const x = indexTip.x * WIDTH;
-        const y = indexTip.y * HEIGHT;
-
-        eraseAt(x, y);
-        drawEraserCursor(x, y);
-        return;
-      }
-
-      // DIBUJAR CON ÍNDICE
-      if (pointerHand) {
-        const indexTip = pointerHand[8];
-        const rawX = indexTip.x * WIDTH;
-        const rawY = indexTip.y * HEIGHT;
-
-        const point = smoothPoint({ x: rawX, y: rawY });
-
-        drawCursor(point.x, point.y, getCurrentColor());
-        drawStroke(point.x, point.y);
-        return;
-      }
-
-      // NINGÚN GESTO ACTIVO
-      lastPoint = null;
-      smoothedPoint = null;
+      // Limpiar el estado de manos que salieron de cuadro este frame
+      Object.keys(handStates).forEach(key => {
+        if (!presentKeys.has(key)) resetHandState(key);
+      });
     }
 
     // ============================================================
