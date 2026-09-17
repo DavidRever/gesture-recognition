@@ -290,11 +290,13 @@
       return fingers.filter(Boolean).length <= 1;
     }
 
-    // Distancia pulgar-índice normalizada por el tamaño de la mano,
+    // Distancia pulgar-meñique normalizada por el tamaño de la mano,
     // para que funcione igual sin importar qué tan cerca esté la mano de la cámara.
+    // Se usa pulgar-meñique (en vez de pulgar-índice) para que no choque
+    // con el puño cerrado, donde el pulgar y el índice ya quedan juntos.
     function pinchRatio(landmarks) {
       const handSize = distance(landmarks[0], landmarks[9]) || 1;
-      const pinchDist = distance(landmarks[4], landmarks[8]);
+      const pinchDist = distance(landmarks[4], landmarks[20]);
       return pinchDist / handSize;
     }
 
@@ -338,13 +340,13 @@
       ctx.restore();
     }
 
-    // Línea que conecta pulgar e índice mientras se pellizca,
+    // Línea que conecta pulgar y meñique mientras se pellizca,
     // como confirmación visual del cambio de color.
     function drawPinchLink(landmarks, color) {
       const thumb = landmarks[4];
-      const index = landmarks[8];
+      const pinky = landmarks[20];
       const x1 = thumb.x * WIDTH, y1 = thumb.y * HEIGHT;
-      const x2 = index.x * WIDTH, y2 = index.y * HEIGHT;
+      const x2 = pinky.x * WIDTH, y2 = pinky.y * HEIGHT;
 
       ctx.save();
       ctx.strokeStyle = color;
@@ -396,7 +398,7 @@
       ctx.strokeRect(tipX - 5, tipY - 5, 10, 10);
       ctx.restore();
 
-      // Marca en la punta del pulgar (útil para ver el pellizco)
+      // Marca en la punta del pulgar y del meñique (útil para ver el pellizco)
       const thumbTip = landmarks[4];
       const thumbX = thumbTip.x * WIDTH;
       const thumbY = thumbTip.y * HEIGHT;
@@ -406,6 +408,17 @@
       ctx.lineWidth = 1.5;
       ctx.globalAlpha = 0.8;
       ctx.strokeRect(thumbX - 5, thumbY - 5, 10, 10);
+      ctx.restore();
+
+      const pinkyTip = landmarks[20];
+      const pinkyX = pinkyTip.x * WIDTH;
+      const pinkyY = pinkyTip.y * HEIGHT;
+
+      ctx.save();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1.5;
+      ctx.globalAlpha = 0.8;
+      ctx.strokeRect(pinkyX - 5, pinkyY - 5, 10, 10);
       ctx.restore();
     }
 
