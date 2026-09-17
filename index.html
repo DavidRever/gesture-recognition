@@ -423,13 +423,22 @@
     // ============================================================
     // PELLIZCO → CAMBIO DE COLOR
     // ============================================================
+    // El pellizco solo cuenta si índice, medio y anular están levantados.
+    // Así se evita el falso positivo al dibujar (índice arriba, el resto
+    // doblado hacia la palma, donde el meñique puede quedar cerca del pulgar).
+    function canPinch(landmarks) {
+      return isIndexUp(landmarks) && isMiddleUp(landmarks) && isRingUp(landmarks);
+    }
+
     // Devuelve true si, este frame, alguna mano está en modo "pellizco"
     // (y por lo tanto no debe dibujar ni borrar).
     function updatePinchState(hands) {
       let minRatio = Infinity;
 
       hands.forEach(landmarks => {
-        minRatio = Math.min(minRatio, pinchRatio(landmarks));
+        if (canPinch(landmarks)) {
+          minRatio = Math.min(minRatio, pinchRatio(landmarks));
+        }
       });
 
       if (minRatio < PINCH_CLOSE_RATIO && !pinchActive) {
