@@ -259,18 +259,33 @@
       return Math.sqrt(dx * dx + dy * dy);
     }
 
+    function distance3D(a, b) {
+      const dx = a.x - b.x;
+      const dy = a.y - b.y;
+      const dz = (a.z || 0) - (b.z || 0);
+      return Math.sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
     // Margen de histéresis en la detección de dedos
     const FINGER_MARGIN = 0.02;
     const INDEX_DOWN_MARGIN = 0.06;
+    const EXTEND_RATIO = 1.15;
+    const COMPACT_RATIO = 1.6;
 
-    function isFingerUp(landmarks, tip, pip) {
-      return landmarks[tip].y < landmarks[pip].y - FINGER_MARGIN;
+    // Dedo "arriba": test vertical o test 3D por distancia a la muñeca
+    function isFingerUp(landmarks, tip, pip, mcp) {
+      const verticalUp = landmarks[tip].y < landmarks[pip].y - FINGER_MARGIN;
+      const wrist = landmarks[0];
+      const extended =
+        distance3D(wrist, landmarks[tip]) >
+        distance3D(wrist, landmarks[mcp]) * EXTEND_RATIO;
+      return verticalUp || extended;
     }
 
-    function isIndexUp(landmarks) { return isFingerUp(landmarks, 8, 6); }
-    function isMiddleUp(landmarks) { return isFingerUp(landmarks, 12, 10); }
-    function isRingUp(landmarks) { return isFingerUp(landmarks, 16, 14); }
-    function isPinkyUp(landmarks) { return isFingerUp(landmarks, 20, 18); }
+    function isIndexUp(landmarks) { return isFingerUp(landmarks, 8, 6, 5); }
+    function isMiddleUp(landmarks) { return isFingerUp(landmarks, 12, 10, 9); }
+    function isRingUp(landmarks) { return isFingerUp(landmarks, 16, 14, 13); }
+    function isPinkyUp(landmarks) { return isFingerUp(landmarks, 20, 18, 17); }
 
     function isIndexFullyDown(landmarks) {
       return landmarks[8].y > landmarks[6].y + INDEX_DOWN_MARGIN;
@@ -292,7 +307,17 @@
         isRingUp(landmarks),
         isPinkyUp(landmarks)
       ];
-      return fingers.filter(Boolean).length <= 1 && isIndexFullyDown(landmarks);
+      const mostlyFolded = fingers.filter(Boolean).length <= 1;
+
+      // Puño: todas las puntas juntas y cerca de la muñeca
+      const handSize = distance(landmarks[0], landmarks[9]) || 1;
+      const tips = [8, 12, 16, 20];
+      const avgTipDist =
+        tips.reduce((sum, id) => sum + distance(landmarks[id], landmarks[0]), 0) /
+        tips.length;
+      const compact = avgTipDist < handSize * COMPACT_RATIO;
+
+      return mostlyFolded && compact && isIndexFullyDown(landmarks);
     }
 
     // Distancia pulgar-meñique normalizada por el tamaño de la mano
